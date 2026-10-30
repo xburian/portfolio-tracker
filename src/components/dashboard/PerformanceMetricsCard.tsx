@@ -229,8 +229,8 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
             </span>
           </div>
 
-          <div className="h-[210px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-[210px] w-full min-h-[210px] relative">
+            <ResponsiveContainer width="100%" height={210} minHeight={180}>
               <AreaChart data={performance.trajectory} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="performanceValueGrad" x1="0" y1="0" x2="0" y2="1">
@@ -282,6 +282,7 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
                   fillOpacity={1}
                   fill="url(#performanceValueGrad)"
                   name="Hodnota portfolia"
+                  isAnimationActive={false}
                 />
                 <Area
                   type="monotone"
@@ -292,6 +293,7 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
                   fillOpacity={1}
                   fill="url(#performanceInvestedGrad)"
                   name="Vložený kapitál"
+                  isAnimationActive={false}
                 />
               </AreaChart>
             </ResponsiveContainer>

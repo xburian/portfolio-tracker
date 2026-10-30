@@ -53,8 +53,8 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
         </div>
       </div>
 
-      <div className="w-full h-[320px] sm:h-[380px]">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="w-full h-[380px] min-h-[380px] relative">
+        <ResponsiveContainer width="100%" height={380} minHeight={320}>
           <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
               {/* Asset mode gradients */}
@@ -83,7 +83,7 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
               stroke="#64748B"
               fontSize={11}
               tickLine={false}
-              tickFormatter={(year) => `${year}r`}
+              tickFormatter={(year) => `${Math.round(year)}r`}
             />
             <YAxis
               stroke="#64748B"
@@ -100,10 +100,11 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
               content={({ active, payload }) => {
                 if (active && payload && payload.length) {
                   const point = payload[0].payload as ProjectionDataPoint;
+                  const displayYear = Math.floor(point.month / 12);
                   return (
                     <div className="p-3.5 rounded-xl bg-slate-900/95 border border-slate-800 shadow-2xl backdrop-blur-md text-xs font-mono min-w-[240px]">
                       <div className="font-bold text-slate-200 mb-1.5 flex items-center justify-between">
-                        <span>Rok {point.year}</span>
+                        <span>{displayYear > 0 ? `Rok ${displayYear}` : 'Výchozí stav'}</span>
                         <span className="text-[10px] text-slate-400 font-normal">Měsíc {point.month}</span>
                       </div>
 
@@ -169,6 +170,7 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
                   strokeWidth={2}
                   fill="url(#savingsGradient)"
                   name="Spořící účet"
+                  isAnimationActive={false}
                 />
                 <Area
                   type="monotone"
@@ -178,6 +180,7 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
                   strokeWidth={2}
                   fill="url(#stocksGradient)"
                   name="Investice (Akcie & ETF)"
+                  isAnimationActive={false}
                 />
               </>
             ) : (
@@ -190,6 +193,7 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
                   strokeWidth={2}
                   fill="url(#principalGradient)"
                   name="Vložený kapitál"
+                  isAnimationActive={false}
                 />
                 <Area
                   type="monotone"
@@ -199,6 +203,7 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
                   strokeWidth={2}
                   fill="url(#gainGradient)"
                   name="Složený úrok (zisk)"
+                  isAnimationActive={false}
                 />
               </>
             )}

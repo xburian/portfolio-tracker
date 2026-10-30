@@ -177,11 +177,12 @@ export class FireService {
       const cumulativeInflation = Math.pow(1 + iMonth, m);
       const realValue = Math.round(currentValue / cumulativeInflation);
 
-      // Add points annually or semi-annually, plus final point
-      if (m % 12 === 0 || m === totalMonths) {
+      // Dynamic sampling interval for smooth trajectory visualization
+      const stepMonths = years <= 1 ? 1 : years <= 3 ? 2 : years <= 5 ? 3 : years <= 10 ? 6 : 12;
+      if (m % stepMonths === 0 || m === totalMonths) {
         points.push({
           month: m,
-          year: m / 12,
+          year: Math.round((m / 12) * 100) / 100,
           principalInvested: totalInvested,
           nominalValue: currentValue,
           realValue,

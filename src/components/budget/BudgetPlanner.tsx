@@ -427,6 +427,29 @@ export const BudgetPlanner: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 3. Spojnice rozpočtu s trajektorií predikce bohatství */}
+      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900/90 via-indigo-950/30 to-slate-900/90 border border-indigo-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
+              <TrendingUp className="w-4 h-4" />
+            </span>
+            <h4 className="text-sm font-bold text-white">Trajektorie růstu bohatství z tohoto rozpočtu</h4>
+          </div>
+          <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
+            Vaše volná měsíční kapacita <strong className="text-emerald-400">{formatCurrency(snapshot.netInvestableCapacityCZK, displayCurrency)}</strong> a valorizace mzdy <strong className="text-indigo-300">+{salaryConfig.annualIncreasePercentage}% ročně</strong> jsou propojeny se simulátorem rozdělení aktiv (Akcie vs. Spořící účet) a časovým testem.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setActiveTab('projection')}
+          className="whitespace-nowrap px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2 group self-stretch sm:self-auto justify-center"
+        >
+          <span>Otevřít zobrazení trajektorie</span>
+          <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+        </button>
+      </div>
     </div>
   );
 };
