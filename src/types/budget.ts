@@ -47,6 +47,7 @@ export interface WealthProjectionConfig {
   expectedSavingsReturnPercent?: number; // e.g. 4.0 % p.a. na spořícím účtu
   stockAllocationPercent?: number; // Kolik % z volné kapacity jde do akcií (např. 70 %, zbytek 30 % na spořák)
   maxSavingsBalanceCZK?: number; // Cílový strop pro spořící účet (např. 500 000 Kč). Veškerý přebytek nad strop přetéká do investic.
+  annualReturnDispersionPercent?: number; // Rozptyl ročního zhodnocení akcií (±% p.a., výchozí 5.0 %)
   expectedSalaryGrowthPercent: number;// e.g. 5.0 % p.a.
   expectedExpenseInflationPercent: number; // e.g. 3.0 % p.a.
   dividendYieldPercent: number;       // e.g. 2.0 % p.a.
@@ -73,4 +74,8 @@ export interface MonthlyWealthProjectionPoint {
   savingsValueCZK: number;
   savingsInvestedCZK: number;
   savingsInterestCZK: number;
+
+  // Rozptyl / Koridor nejistoty
+  varianceUpperValueCZK?: number;
+  varianceLowerValueCZK?: number;
 }

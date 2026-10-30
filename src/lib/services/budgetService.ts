@@ -98,6 +98,21 @@ export class BudgetService {
       currentStocks += initialExcess;
     }
 
+    const dispersion = config.annualReturnDispersionPercent !== undefined && config.annualReturnDispersionPercent > 0
+      ? config.annualReturnDispersionPercent / 100
+      : undefined;
+
+    const rStockMonthUpper = dispersion !== undefined
+      ? Math.pow(1 + (config.expectedStockReturnPercent / 100 + dispersion), 1 / 12) - 1
+      : rStockMonth;
+
+    const rStockMonthLower = dispersion !== undefined
+      ? Math.pow(1 + Math.max(0, config.expectedStockReturnPercent / 100 - dispersion), 1 / 12) - 1
+      : rStockMonth;
+
+    let currentStocksUpper = currentStocks;
+    let currentStocksLower = currentStocks;
+
     let cumulativeStocksInvested = currentStocks;
     let cumulativeSavingsInvested = currentSavings;
     let cumulativeDividends = 0;
@@ -126,6 +141,8 @@ export class BudgetService {
       savingsValueCZK: initialSavingsRounded,
       savingsInvestedCZK: initialSavingsInvested,
       savingsInterestCZK: 0,
+      varianceUpperValueCZK: dispersion !== undefined ? initialStocksRounded + initialSavingsRounded : undefined,
+      varianceLowerValueCZK: dispersion !== undefined ? initialStocksRounded + initialSavingsRounded : undefined,
     });
 
     for (let m = 1; m <= totalMonths; m++) {
@@ -183,6 +200,18 @@ export class BudgetService {
       const stockGain = currentStocks * rStockMonth;
       const totalStockContribution = stockContribution + monthlySpillover;
       currentStocks = currentStocks + stockGain + totalStockContribution + dripAddition;
+
+      if (dispersion !== undefined) {
+        const stockGainUpper = currentStocksUpper * rStockMonthUpper;
+        const stockGainLower = currentStocksLower * rStockMonthLower;
+        const monthlyDivUpper = currentStocksUpper * divYieldMonthly * 0.85;
+        const monthlyDivLower = currentStocksLower * divYieldMonthly * 0.85;
+        const dripUpper = config.dripEnabled ? monthlyDivUpper : 0;
+        const dripLower = config.dripEnabled ? monthlyDivLower : 0;
+        currentStocksUpper = currentStocksUpper + stockGainUpper + totalStockContribution + dripUpper;
+        currentStocksLower = currentStocksLower + stockGainLower + totalStockContribution + dripLower;
+      }
+
       cumulativeStocksInvested += totalStockContribution;
 
       const stocksRounded = Math.round(currentStocks);
@@ -213,6 +242,8 @@ export class BudgetService {
         savingsValueCZK: savingsRounded,
         savingsInvestedCZK: savingsInvestedRounded,
         savingsInterestCZK: Math.max(0, savingsRounded - savingsInvestedRounded),
+        varianceUpperValueCZK: dispersion !== undefined ? Math.round(currentStocksUpper + currentSavings) : undefined,
+        varianceLowerValueCZK: dispersion !== undefined ? Math.max(0, Math.round(currentStocksLower + currentSavings)) : undefined,
       });
     }
 

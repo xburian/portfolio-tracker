@@ -139,4 +139,60 @@ describe('FIRE & Milestone Simulator', () => {
     expect(lastWithCap.stocksValue).toBeGreaterThan(lastWithoutCap.stocksValue);
     expect(lastWithCap.nominalValue).toBeGreaterThan(lastWithoutCap.nominalValue);
   });
+
+  it('calculates dispersion / volatility confidence cone (±5% p.a. default) widening monotonically over time', () => {
+    const initialCapital = 200_000;
+    const monthlyDCA = 20_000;
+    const returnCAGR = 0.10; // 10% p.a.
+    const dispersionPct = 5.0; // ±5% p.a.
+
+    const points = FireService.generateProjection(
+      initialCapital,
+      monthlyDCA,
+      returnCAGR,
+      0.025,
+      10,
+      {
+        stockAllocationPct: 70,
+        savingsNominalReturn: 0.04,
+        maxSavingsBalanceCZK: 500_000,
+        annualReturnDispersionPct: dispersionPct,
+      }
+    );
+
+    expect(points.length).toBeGreaterThan(1);
+
+    // Month 0: bounds must equal exact nominal value (no past volatility yet)
+    const p0 = points[0];
+    expect(p0.varianceUpperValue).toBe(p0.nominalValue);
+    expect(p0.varianceLowerValue).toBe(p0.nominalValue);
+    expect(p0.dispersionPercent).toBe(5.0);
+
+    let prevSpread = 0;
+    for (let i = 1; i < points.length; i++) {
+      const p = points[i];
+      expect(p.varianceUpperValue).toBeDefined();
+      expect(p.varianceLowerValue).toBeDefined();
+
+      // Upper boundary strictly greater than nominal, lower boundary strictly less than nominal
+      expect(p.varianceUpperValue!).toBeGreaterThan(p.nominalValue);
+      expect(p.varianceLowerValue!).toBeLessThan(p.nominalValue);
+
+      // Invariant: variance envelope spread monotonically widens as compounding horizon expands
+      const spread = p.varianceUpperValue! - p.varianceLowerValue!;
+      expect(spread).toBeGreaterThan(prevSpread);
+      prevSpread = spread;
+    }
+
+    // Verify projection without dispersion has undefined bounds
+    const pointsNoDispersion = FireService.generateProjection(
+      initialCapital,
+      monthlyDCA,
+      returnCAGR,
+      0.025,
+      5
+    );
+    expect(pointsNoDispersion[0].varianceUpperValue).toBeUndefined();
+    expect(pointsNoDispersion[0].varianceLowerValue).toBeUndefined();
+  });
 });

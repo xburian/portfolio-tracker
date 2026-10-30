@@ -280,5 +280,37 @@ describe('Budget, Cashflow & Wealth Simulation Service (Senior Engineering Test 
       expect(finalPoint.savingsValueCZK).toBe(cap);
       expect(finalPoint.stocksValueCZK).toBeGreaterThan(finalPoint.savingsValueCZK);
     });
+
+    it('models annual return dispersion confidence band (±5% p.a.) in career & budget wealth trajectory', () => {
+      const config: WealthProjectionConfig = {
+        horizonYears: 5,
+        initialNetWorthCZK: 200000,
+        monthlyInvestableSurplusCZK: 15000,
+        expectedStockReturnPercent: 10.0,
+        annualReturnDispersionPercent: 5.0, // ±5% p.a.
+        expectedSavingsReturnPercent: 4.0,
+        stockAllocationPercent: 70,
+        maxSavingsBalanceCZK: 300000,
+        expectedSalaryGrowthPercent: 5.0,
+        expectedExpenseInflationPercent: 2.5,
+        dividendYieldPercent: 2.0,
+        dripEnabled: true,
+        savingsReinvestmentRatePercent: 100,
+      };
+
+      const points = BudgetService.simulateWealthProjection(config, mockSalary, mockExpenses);
+
+      // Month 0
+      const p0 = points[0];
+      expect(p0.varianceUpperValueCZK).toBe(p0.portfolioValueCZK);
+      expect(p0.varianceLowerValueCZK).toBe(p0.portfolioValueCZK);
+
+      // Month 60
+      const p60 = points[60];
+      expect(p60.varianceUpperValueCZK).toBeDefined();
+      expect(p60.varianceLowerValueCZK).toBeDefined();
+      expect(p60.varianceUpperValueCZK!).toBeGreaterThan(p60.portfolioValueCZK);
+      expect(p60.varianceLowerValueCZK!).toBeLessThan(p60.portfolioValueCZK);
+    });
   });
 });

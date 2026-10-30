@@ -17,6 +17,11 @@ export interface ProjectionDataPoint {
 
   // Kumulovaný přeliv peněz ze spořícího účtu do akcií po dosažení stropu
   savingsSpilloverToStocks?: number;
+
+  // Rozptyl / Koridor nejistoty (Confidence / Volatility Band)
+  varianceUpperValue?: number;
+  varianceLowerValue?: number;
+  dispersionPercent?: number;
 }
 
 export interface MilestoneResult {
@@ -111,6 +116,7 @@ export class FireService {
       stockAllocationPct?: number; // e.g. 70 (%)
       savingsNominalReturn?: number; // e.g. 0.04 (4% p.a.)
       maxSavingsBalanceCZK?: number; // e.g. 500_000 (Kč limit pro spořící účet)
+      annualReturnDispersionPct?: number; // e.g. 5.0 (%) rozptyl ročního zhodnocení akcií (±5% p.a.)
       initialStocks?: number;
       initialSavings?: number;
     } = {}
@@ -129,6 +135,13 @@ export class FireService {
     const iMonth = annualInflation / 12;
     const maxSavingsCap = options.maxSavingsBalanceCZK;
 
+    const dispersion = options.annualReturnDispersionPct !== undefined && options.annualReturnDispersionPct > 0
+      ? options.annualReturnDispersionPct / 100
+      : undefined;
+
+    const jStockUpper = dispersion !== undefined ? (annualNominalReturn + dispersion) / 12 : jStock;
+    const jStockLower = dispersion !== undefined ? Math.max(0, annualNominalReturn - dispersion) / 12 : jStock;
+
     let currentStocks = options.initialStocks !== undefined
       ? options.initialStocks
       : initialValue * stockAllocRatio;
@@ -143,6 +156,9 @@ export class FireService {
       currentSavings = maxSavingsCap;
       currentStocks += initialExcess;
     }
+
+    let currentStocksUpper = currentStocks;
+    let currentStocksLower = currentStocks;
 
     let totalStocksInvested = currentStocks;
     let totalSavingsInvested = currentSavings;
@@ -166,6 +182,9 @@ export class FireService {
       savingsPrincipalInvested: initialSavingsRounded,
       savingsInterestGain: 0,
       savingsSpilloverToStocks: 0,
+      varianceUpperValue: dispersion !== undefined ? initialStocksRounded + initialSavingsRounded : undefined,
+      varianceLowerValue: dispersion !== undefined ? initialStocksRounded + initialSavingsRounded : undefined,
+      dispersionPercent: options.annualReturnDispersionPct,
     });
 
     for (let m = 1; m <= totalMonths; m++) {
@@ -200,6 +219,10 @@ export class FireService {
       // 3. Stocks investment + spillover
       const totalStockDCA = stockDCA + monthlySpillover;
       currentStocks = (currentStocks + totalStockDCA) * (1 + jStock);
+      if (dispersion !== undefined) {
+        currentStocksUpper = (currentStocksUpper + totalStockDCA) * (1 + jStockUpper);
+        currentStocksLower = (currentStocksLower + totalStockDCA) * (1 + jStockLower);
+      }
       totalStocksInvested += totalStockDCA;
 
       const stocksRounded = Math.round(currentStocks);
@@ -230,6 +253,9 @@ export class FireService {
           savingsPrincipalInvested: savingsInvestedRounded,
           savingsInterestGain: Math.max(0, savingsRounded - savingsInvestedRounded),
           savingsSpilloverToStocks: Math.round(cumulativeSpillover),
+          varianceUpperValue: dispersion !== undefined ? Math.round(currentStocksUpper + currentSavings) : undefined,
+          varianceLowerValue: dispersion !== undefined ? Math.max(0, Math.round(currentStocksLower + currentSavings)) : undefined,
+          dispersionPercent: options.annualReturnDispersionPct,
         });
       }
     }

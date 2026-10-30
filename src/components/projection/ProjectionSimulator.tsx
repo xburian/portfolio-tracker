@@ -32,6 +32,9 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
   const [savingsReturnPct, setSavingsReturnPct] = useState<number>(4.0); // 4% p.a.
   const [maxSavingsCap, setMaxSavingsCap] = useState<number>(500000); // 500k Kč strop na spořícím účtu (přebytek přetéká do investic), 0 = neomezeno
 
+  // Volatility & Return dispersion (Rozptyl zhodnocení na trajektorii bohatství, výchozí 5 %)
+  const [dispersionPct, setDispersionPct] = useState<number>(5.0);
+
   // Advanced toggles
   const [includeCareerEscalator, setIncludeCareerEscalator] = useState<boolean>(true);
   const [dripReinvestment, setDripReinvestment] = useState<boolean>(true);
@@ -69,9 +72,10 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
         stockAllocationPct,
         savingsNominalReturn: savingsReturnPct / 100,
         maxSavingsBalanceCZK: maxSavingsCap > 0 ? maxSavingsCap : undefined,
+        annualReturnDispersionPct: dispersionPct > 0 ? dispersionPct : undefined,
       }
     );
-  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears, includeCareerEscalator, dripReinvestment, salaryConfig, stockAllocationPct, savingsReturnPct, maxSavingsCap]);
+  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears, includeCareerEscalator, dripReinvestment, salaryConfig, stockAllocationPct, savingsReturnPct, maxSavingsCap, dispersionPct]);
 
   const milestones = useMemo(() => {
     return FireService.getMilestones(
@@ -396,6 +400,65 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
               <span className="text-[11px] text-slate-400">Vyplacené dividendy se automaticky přikupují zpět do portfolia</span>
             </div>
           </label>
+        </div>
+
+        {/* 5. Rozptyl zhodnocení na trajektorii bohatství (Volatilita & pásmo nejistoty) */}
+        <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              <span className="text-xs font-semibold text-slate-200">
+                Pásmo rozptylu na trajektorii bohatství (Volatilita zhodnocení akcií):
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <span className="px-2.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 font-bold">
+                {dispersionPct > 0 ? `±${dispersionPct.toFixed(1)} % p.a.` : 'Bez rozptylu (0 %)'}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-400">
+            Zobrazuje koridor očekávaného vývoje portfolia mezi pesimistickým scénářem ({Math.max(0, annualReturnPct - dispersionPct).toFixed(1)} % p.a.) a optimistickým scénářem ({(annualReturnPct + dispersionPct).toFixed(1)} % p.a.) pro rizikovou složku (akcie & ETF).
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-1">
+            <div className="w-full sm:flex-1 flex flex-col gap-1">
+              <input
+                type="range"
+                min="0"
+                max="15.0"
+                step="0.5"
+                value={dispersionPct}
+                onChange={(e) => setDispersionPct(parseFloat(e.target.value))}
+                className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+              />
+              <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                <span>0 % (pouze průměr)</span>
+                <span>±3 % (mírná)</span>
+                <span className="text-indigo-400 font-bold">±5 % (výchozí)</span>
+                <span>±8 % (střední)</span>
+                <span>±12 % (vysoká)</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[0, 3, 5, 8, 10, 12].map((pct) => (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => setDispersionPct(pct)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-all ${
+                    dispersionPct === pct
+                      ? 'bg-indigo-600 text-white font-bold shadow-md'
+                      : 'bg-slate-800/70 text-slate-400 hover:text-slate-200 border border-slate-700/60'
+                  }`}
+                >
+                  {pct === 0 ? 'Vypnuto' : `±${pct} %${pct === 5 ? ' (Výchozí)' : ''}`}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Milestone Cards */}

@@ -11,6 +11,7 @@ export type ChartDisplayMode = 'assets' | 'growth' | 'inflation';
 
 export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
   const [chartMode, setChartMode] = useState<ChartDisplayMode>('assets');
+  const [showDispersion, setShowDispersion] = useState<boolean>(true);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -26,7 +27,11 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
   const plotHeight = VIEW_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM;
   const plotYBottom = VIEW_HEIGHT - MARGIN_BOTTOM;
 
-  // Max value calculation with nice round ceiling
+  const dispersionPct = useMemo(() => {
+    return data?.find((d) => d.dispersionPercent !== undefined)?.dispersionPercent;
+  }, [data]);
+
+  // Max value calculation with nice round ceiling (incorporating upper variance boundary)
   const { maxVal, yTicks } = useMemo(() => {
     if (!data || data.length === 0) {
       return { maxVal: 1000000, yTicks: [0, 250000, 500000, 750000, 1000000] };
@@ -34,7 +39,13 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
 
     let highest = 0;
     for (const d of data) {
-      highest = Math.max(highest, d.nominalValue, d.principalInvested, d.stocksValue + d.savingsValue);
+      highest = Math.max(
+        highest,
+        d.nominalValue,
+        d.principalInvested,
+        d.stocksValue + d.savingsValue,
+        d.varianceUpperValue ?? 0
+      );
     }
     if (highest <= 0) highest = 100000;
 
@@ -78,6 +89,14 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
       // 3. Inflation mode
       const yReal = plotYBottom - (d.realValue / maxVal) * plotHeight;
 
+      // 4. Dispersion / Confidence Cone
+      const yVarianceUpper = d.varianceUpperValue !== undefined
+        ? plotYBottom - (d.varianceUpperValue / maxVal) * plotHeight
+        : undefined;
+      const yVarianceLower = d.varianceLowerValue !== undefined
+        ? plotYBottom - (d.varianceLowerValue / maxVal) * plotHeight
+        : undefined;
+
       return {
         point: d,
         index: i,
@@ -87,6 +106,8 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
         yPrincipal,
         yNominal,
         yReal,
+        yVarianceUpper,
+        yVarianceLower,
       };
     });
   }, [data, maxVal, plotWidth, plotHeight, plotYBottom, MARGIN_LEFT]);
@@ -120,6 +141,27 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
     const realTopLine = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.yReal.toFixed(1)}`).join(' ');
     const realAreaPath = `${realTopLine} L ${lastX.toFixed(1)} ${plotYBottom} L ${firstX.toFixed(1)} ${plotYBottom} Z`;
 
+    // Dispersion Corridor Envelope (Upper & Lower bounds polygon)
+    const hasVariance = pts.some((p) => p.yVarianceUpper !== undefined && p.yVarianceLower !== undefined);
+    let dispersionConeAreaPath = '';
+    let varianceUpperLine = '';
+    let varianceLowerLine = '';
+
+    if (hasVariance) {
+      varianceUpperLine = pts
+        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${(p.yVarianceUpper ?? p.yTotal).toFixed(1)}`)
+        .join(' ');
+      const varianceLowerReverse = pts
+        .slice()
+        .reverse()
+        .map((p) => `L ${p.x.toFixed(1)} ${(p.yVarianceLower ?? p.yTotal).toFixed(1)}`)
+        .join(' ');
+      dispersionConeAreaPath = `${varianceUpperLine} ${varianceLowerReverse} Z`;
+      varianceLowerLine = pts
+        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${(p.yVarianceLower ?? p.yTotal).toFixed(1)}`)
+        .join(' ');
+    }
+
     return {
       savingsAreaPath,
       stocksAreaPath,
@@ -129,6 +171,10 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
       gainTopLine,
       realAreaPath,
       realTopLine,
+      hasVariance,
+      dispersionConeAreaPath,
+      varianceUpperLine,
+      varianceLowerLine,
     };
   }, [pointsWithCoords, plotYBottom]);
 
@@ -191,41 +237,59 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
           </div>
         </div>
 
-        {/* View mode toggle pills */}
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-          <button
-            type="button"
-            onClick={() => setChartMode('assets')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-              chartMode === 'assets'
-                ? 'bg-indigo-600 text-white font-semibold shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Akcie vs. Spořící účet
-          </button>
-          <button
-            type="button"
-            onClick={() => setChartMode('growth')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-              chartMode === 'growth'
-                ? 'bg-indigo-600 text-white font-semibold shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Vložený kapitál vs. Zisk
-          </button>
-          <button
-            type="button"
-            onClick={() => setChartMode('inflation')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-              chartMode === 'inflation'
-                ? 'bg-indigo-600 text-white font-semibold shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Vliv inflace
-          </button>
+        {/* View mode toggle pills & Dispersion Corridor Switch */}
+        <div className="flex flex-wrap items-center gap-2">
+          {paths?.hasVariance && (
+            <button
+              type="button"
+              onClick={() => setShowDispersion((v) => !v)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all flex items-center gap-2 border ${
+                showDispersion
+                  ? 'bg-indigo-950/80 text-indigo-300 border-indigo-500/50 shadow-md font-semibold'
+                  : 'bg-slate-950/60 text-slate-500 border-slate-800 hover:text-slate-300'
+              }`}
+              title="Zobrazit / skrýt koridor rozptylu (volatilitu výnosu)"
+            >
+              <span className={`w-2 h-2 rounded-full ${showDispersion ? 'bg-indigo-400 animate-pulse' : 'bg-slate-600'}`} />
+              <span>Rozptyl {dispersionPct !== undefined ? `(±${dispersionPct} %)` : ''}</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+            <button
+              type="button"
+              onClick={() => setChartMode('assets')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+                chartMode === 'assets'
+                  ? 'bg-indigo-600 text-white font-semibold shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Akcie vs. Spořící účet
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartMode('growth')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+                chartMode === 'growth'
+                  ? 'bg-indigo-600 text-white font-semibold shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Vložený kapitál vs. Zisk
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartMode('inflation')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+                chartMode === 'inflation'
+                  ? 'bg-indigo-600 text-white font-semibold shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Vliv inflace
+            </button>
+          </div>
         </div>
       </div>
 
@@ -264,6 +328,12 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
               <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.55} />
               <stop offset="100%" stopColor="#F59E0B" stopOpacity={0.12} />
             </linearGradient>
+
+            {/* Dispersion Corridor Gradient */}
+            <linearGradient id="dispersionConeGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#818CF8" stopOpacity={0.28} />
+              <stop offset="100%" stopColor="#818CF8" stopOpacity={0.06} />
+            </linearGradient>
           </defs>
 
           {/* Horizontal Gridlines & Y-Axis Labels */}
@@ -293,6 +363,29 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
               </g>
             );
           })}
+
+          {/* Dispersion / Volatility Corridor */}
+          {paths && paths.hasVariance && showDispersion && paths.dispersionConeAreaPath && (
+            <g className="dispersion-corridor" opacity={chartMode === 'inflation' ? 0.35 : 0.85}>
+              <path d={paths.dispersionConeAreaPath} fill="url(#dispersionConeGradient)" />
+              <path
+                d={paths.varianceUpperLine}
+                fill="none"
+                stroke="#818CF8"
+                strokeWidth="1.5"
+                strokeDasharray="4 3"
+                strokeOpacity={0.9}
+              />
+              <path
+                d={paths.varianceLowerLine}
+                fill="none"
+                stroke="#818CF8"
+                strokeWidth="1.5"
+                strokeDasharray="4 3"
+                strokeOpacity={0.9}
+              />
+            </g>
+          )}
 
           {/* Area & Stroke Paths */}
           {paths && (
@@ -422,6 +515,28 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
                   <circle cx={activeCoord.x} cy={activeCoord.yReal} r="5" fill="#F59E0B" stroke="#0B0E14" strokeWidth="2" />
                 </>
               )}
+
+              {/* Dispersion Upper & Lower dots on crosshair */}
+              {showDispersion && activeCoord.yVarianceUpper !== undefined && activeCoord.yVarianceLower !== undefined && (
+                <>
+                  <circle
+                    cx={activeCoord.x}
+                    cy={activeCoord.yVarianceUpper}
+                    r="3.5"
+                    fill="#818CF8"
+                    stroke="#0B0E14"
+                    strokeWidth="1.5"
+                  />
+                  <circle
+                    cx={activeCoord.x}
+                    cy={activeCoord.yVarianceLower}
+                    r="3.5"
+                    fill="#818CF8"
+                    stroke="#0B0E14"
+                    strokeWidth="1.5"
+                  />
+                </>
+              )}
             </g>
           )}
         </svg>
@@ -463,6 +578,14 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
                 </div>
               </>
             )}
+
+            {/* Dispersion Corridor Legend Pill */}
+            {paths?.hasVariance && showDispersion && (
+              <div className="flex items-center gap-1.5 font-medium text-indigo-400 border-l border-slate-800 pl-3">
+                <span className="w-3.5 h-2 rounded border border-dashed border-indigo-400 bg-indigo-500/20 inline-block" />
+                <span>Pásmo rozptylu {dispersionPct !== undefined ? `(±${dispersionPct} % p.a.)` : ''}</span>
+              </div>
+            )}
           </div>
 
           <span className="text-[11px] text-slate-500 font-mono">
@@ -473,7 +596,7 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
 
       {/* Floating Detailed Snapshot Card for Active / Hovered Point */}
       {activeCoord && (
-        <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 shadow-2xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-mono text-xs">
+        <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 shadow-2xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 font-mono text-xs">
           {/* 1. Období a celková hodnota */}
           <div>
             <div className="text-[11px] text-slate-400 mb-0.5">
@@ -536,6 +659,24 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
               )
             </div>
           </div>
+
+          {/* 5. Rozptyl / Pásmo volatility */}
+          {activeCoord.point.varianceUpperValue !== undefined && activeCoord.point.varianceLowerValue !== undefined && (
+            <div className="border-l border-indigo-500/30 pl-3">
+              <div className="text-[11px] text-indigo-400 font-semibold flex items-center gap-1.5 mb-0.5">
+                <span className="w-2 h-2 rounded-full bg-indigo-400 inline-block" />
+                <span>Rozptyl {activeCoord.point.dispersionPercent !== undefined ? `(±${activeCoord.point.dispersionPercent} %)` : ''}:</span>
+              </div>
+              <div className="text-xs font-bold text-indigo-300">
+                <MoneyDisplay amount={activeCoord.point.varianceLowerValue} />
+                <span className="text-slate-500 font-normal mx-1">–</span>
+                <MoneyDisplay amount={activeCoord.point.varianceUpperValue} />
+              </div>
+              <div className="text-[10px] text-slate-400 pt-0.5">
+                Koridor volatility zhodnocení akcií
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
