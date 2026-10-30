@@ -5,6 +5,15 @@ export interface ProjectionDataPoint {
   nominalValue: number;
   realValue: number;
   compoundInterestGain: number;
+
+  // 2-bucket split: Investice (Akcie & ETF) vs. Spořící účet (Spořák)
+  stocksValue: number;
+  stocksPrincipalInvested: number;
+  stocksCompoundGain: number;
+
+  savingsValue: number;
+  savingsPrincipalInvested: number;
+  savingsInterestGain: number;
 }
 
 export interface MilestoneResult {
@@ -94,43 +103,95 @@ export class FireService {
     monthlyDCA: number,
     annualNominalReturn: number,
     annualInflation: number = 0.025,
-    years: number = 10
+    years: number = 10,
+    options: {
+      stockAllocationPct?: number; // e.g. 70 (%)
+      savingsNominalReturn?: number; // e.g. 0.04 (4% p.a.)
+      initialStocks?: number;
+      initialSavings?: number;
+    } = {}
   ): ProjectionDataPoint[] {
     const points: ProjectionDataPoint[] = [];
     const totalMonths = years * 12;
-    const j = annualNominalReturn / 12;
+
+    const stockAllocRatio = (options.stockAllocationPct !== undefined ? options.stockAllocationPct : 100) / 100;
+    const savingsAllocRatio = 1 - stockAllocRatio;
+
+    const jStock = annualNominalReturn / 12;
+    // 15% withholding tax on savings interest in CZ
+    const savingsGross = options.savingsNominalReturn !== undefined ? options.savingsNominalReturn : 0.04;
+    const jSavings = (savingsGross * 0.85) / 12;
+
     const iMonth = annualInflation / 12;
 
-    let currentValue = initialValue;
-    let totalInvested = initialValue;
+    let currentStocks = options.initialStocks !== undefined
+      ? options.initialStocks
+      : initialValue * stockAllocRatio;
+
+    let currentSavings = options.initialSavings !== undefined
+      ? options.initialSavings
+      : initialValue * savingsAllocRatio;
+
+    let totalStocksInvested = currentStocks;
+    let totalSavingsInvested = currentSavings;
+
+    const initialStocksRounded = Math.round(currentStocks);
+    const initialSavingsRounded = Math.round(currentSavings);
 
     // Month 0
     points.push({
       month: 0,
       year: 0,
-      principalInvested: Math.round(initialValue),
-      nominalValue: Math.round(initialValue),
-      realValue: Math.round(initialValue),
+      principalInvested: initialStocksRounded + initialSavingsRounded,
+      nominalValue: initialStocksRounded + initialSavingsRounded,
+      realValue: initialStocksRounded + initialSavingsRounded,
       compoundInterestGain: 0,
+      stocksValue: initialStocksRounded,
+      stocksPrincipalInvested: initialStocksRounded,
+      stocksCompoundGain: 0,
+      savingsValue: initialSavingsRounded,
+      savingsPrincipalInvested: initialSavingsRounded,
+      savingsInterestGain: 0,
     });
 
     for (let m = 1; m <= totalMonths; m++) {
-      // Annuity due: invest at start of month, then apply monthly compounding
-      currentValue = (currentValue + monthlyDCA) * (1 + j);
-      totalInvested += monthlyDCA;
+      const stockDCA = monthlyDCA * stockAllocRatio;
+      const savingsDCA = monthlyDCA * savingsAllocRatio;
+
+      // Stocks: Annuity due (compounding monthly)
+      currentStocks = (currentStocks + stockDCA) * (1 + jStock);
+      totalStocksInvested += stockDCA;
+
+      // Savings account: Lower interest rate (compounding monthly)
+      currentSavings = (currentSavings + savingsDCA) * (1 + jSavings);
+      totalSavingsInvested += savingsDCA;
+
+      const stocksRounded = Math.round(currentStocks);
+      const savingsRounded = Math.round(currentSavings);
+      const stocksInvestedRounded = Math.round(totalStocksInvested);
+      const savingsInvestedRounded = Math.round(totalSavingsInvested);
+
+      const currentValue = stocksRounded + savingsRounded;
+      const totalInvested = stocksInvestedRounded + savingsInvestedRounded;
 
       const cumulativeInflation = Math.pow(1 + iMonth, m);
-      const realValue = currentValue / cumulativeInflation;
+      const realValue = Math.round(currentValue / cumulativeInflation);
 
       // Add points annually or semi-annually, plus final point
       if (m % 12 === 0 || m === totalMonths) {
         points.push({
           month: m,
           year: m / 12,
-          principalInvested: Math.round(totalInvested),
-          nominalValue: Math.round(currentValue),
-          realValue: Math.round(realValue),
-          compoundInterestGain: Math.round(currentValue - totalInvested),
+          principalInvested: totalInvested,
+          nominalValue: currentValue,
+          realValue,
+          compoundInterestGain: Math.max(0, currentValue - totalInvested),
+          stocksValue: stocksRounded,
+          stocksPrincipalInvested: stocksInvestedRounded,
+          stocksCompoundGain: Math.max(0, stocksRounded - stocksInvestedRounded),
+          savingsValue: savingsRounded,
+          savingsPrincipalInvested: savingsInvestedRounded,
+          savingsInterestGain: Math.max(0, savingsRounded - savingsInvestedRounded),
         });
       }
     }

@@ -51,4 +51,35 @@ describe('FIRE & Milestone Simulator', () => {
     expect(last.nominalValue).toBeGreaterThan(last.principalInvested);
     expect(last.compoundInterestGain).toBe(last.nominalValue - last.principalInvested);
   });
+
+  it('generates 2-bucket asset trajectory with separate stocks and savings accounts', () => {
+    const points = FireService.generateProjection(
+      200_000,
+      20_000,
+      0.10, // 10% stocks
+      0.025,
+      5,
+      {
+        stockAllocationPct: 70, // 70% stocks, 30% savings
+        savingsNominalReturn: 0.04, // 4% savings account
+      }
+    );
+
+    expect(points.length).toBeGreaterThan(0);
+
+    const first = points[0];
+    expect(first.stocksValue).toBe(140_000); // 70% of 200k
+    expect(first.savingsValue).toBe(60_000);  // 30% of 200k
+    expect(first.stocksValue + first.savingsValue).toBe(first.nominalValue);
+
+    const last = points[points.length - 1];
+    expect(last.stocksValue + last.savingsValue).toBe(last.nominalValue);
+    expect(last.stocksPrincipalInvested + last.savingsPrincipalInvested).toBe(last.principalInvested);
+    expect(last.stocksCompoundGain + last.savingsInterestGain).toBe(last.compoundInterestGain);
+
+    // Stocks must yield higher compound gain than savings
+    expect(last.stocksCompoundGain / last.stocksPrincipalInvested).toBeGreaterThan(
+      last.savingsInterestGain / last.savingsPrincipalInvested
+    );
+  });
 });

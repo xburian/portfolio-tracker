@@ -175,5 +175,79 @@ describe('Budget, Cashflow & Wealth Simulation Service (Senior Engineering Test 
       expect(v10).toBeGreaterThan(v6);
       expect(v14).toBeGreaterThan(v10);
     });
+
+    it('accurately splits wealth accumulation into 2 buckets (Investice/Akcie vs. Spořící účet) with distinct returns', () => {
+      const splitConfig: WealthProjectionConfig = {
+        horizonYears: 5,
+        initialNetWorthCZK: 500000,
+        monthlyInvestableSurplusCZK: 30000,
+        expectedStockReturnPercent: 10.0, // 10% on stocks
+        expectedSavingsReturnPercent: 4.0, // 4% on savings account (spořák)
+        stockAllocationPercent: 70, // 70% stocks, 30% savings account
+        expectedSalaryGrowthPercent: 5.0,
+        expectedExpenseInflationPercent: 2.5,
+        dividendYieldPercent: 2.0,
+        dripEnabled: true,
+        savingsReinvestmentRatePercent: 100,
+      };
+
+      const points = BudgetService.simulateWealthProjection(splitConfig, mockSalary, mockExpenses);
+      expect(points.length).toBe(61); // Month 0 to 60
+
+      // Month 0: Check initial split (70% stocks = 350,000; 30% savings = 150,000)
+      const p0 = points[0];
+      expect(p0.stocksValueCZK).toBe(350000);
+      expect(p0.savingsValueCZK).toBe(150000);
+      expect(p0.stocksValueCZK + p0.savingsValueCZK).toBe(p0.portfolioValueCZK);
+
+      // Check invariants across all 60 months
+      for (const pt of points) {
+        // Total value invariant
+        expect(pt.stocksValueCZK + pt.savingsValueCZK).toBe(pt.portfolioValueCZK);
+        // Total invested invariant
+        expect(pt.stocksInvestedCZK + pt.savingsInvestedCZK).toBe(pt.cumulativeInvestedCZK);
+        // Both buckets must grow
+        expect(pt.stocksValueCZK).toBeGreaterThanOrEqual(pt.stocksInvestedCZK);
+        expect(pt.savingsValueCZK).toBeGreaterThanOrEqual(pt.savingsInvestedCZK);
+      }
+
+      // Final point: Stocks with 10% CAGR + dividends must generate significantly higher % return than 4% savings account
+      const pFinal = points[points.length - 1];
+      const stockGainPct = (pFinal.stocksCompoundGainCZK / pFinal.stocksInvestedCZK) * 100;
+      const savingsGainPct = (pFinal.savingsInterestCZK / pFinal.savingsInvestedCZK) * 100;
+
+      expect(stockGainPct).toBeGreaterThan(savingsGainPct);
+      expect(pFinal.stocksValueCZK).toBeGreaterThan(pFinal.savingsValueCZK);
+      expect(pFinal.savingsInterestCZK).toBeGreaterThan(0);
+    });
+
+    it('proves that 100% stock allocation outperforms 100% savings allocation over 5 years', () => {
+      const base: WealthProjectionConfig = {
+        horizonYears: 5,
+        initialNetWorthCZK: 300000,
+        monthlyInvestableSurplusCZK: 20000,
+        expectedStockReturnPercent: 10.0,
+        expectedSavingsReturnPercent: 3.5,
+        expectedSalaryGrowthPercent: 4.0,
+        expectedExpenseInflationPercent: 2.5,
+        dividendYieldPercent: 2.0,
+        dripEnabled: true,
+        savingsReinvestmentRatePercent: 100,
+      };
+
+      const allStocks = BudgetService.simulateWealthProjection({ ...base, stockAllocationPercent: 100 }, mockSalary, mockExpenses);
+      const allSavings = BudgetService.simulateWealthProjection({ ...base, stockAllocationPercent: 0 }, mockSalary, mockExpenses);
+
+      const finalStocks = allStocks[allStocks.length - 1];
+      const finalSavings = allSavings[allSavings.length - 1];
+
+      // Principal invested is identical
+      expect(finalStocks.cumulativeInvestedCZK).toBe(finalSavings.cumulativeInvestedCZK);
+
+      // Total wealth is strictly higher in stocks due to CAGR difference
+      expect(finalStocks.portfolioValueCZK).toBeGreaterThan(finalSavings.portfolioValueCZK);
+      expect(finalSavings.savingsValueCZK).toBe(finalSavings.portfolioValueCZK);
+      expect(finalStocks.stocksValueCZK).toBe(finalStocks.portfolioValueCZK);
+    });
   });
 });

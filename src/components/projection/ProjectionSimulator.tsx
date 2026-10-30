@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Sparkles, TrendingUp, Compass, Flame, Wallet, RefreshCw, Zap } from 'lucide-react';
+import { Sparkles, TrendingUp, Compass, Flame, Wallet, RefreshCw, Zap, Landmark } from 'lucide-react';
 import { ValuationDetail } from '@/types/portfolio';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 import { FireService } from '@/lib/services/fireService';
@@ -26,6 +26,10 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
   const [annualReturnPct, setAnnualReturnPct] = useState<number>(10.0);
   const [horizonYears, setHorizonYears] = useState<number>(5);
   const [desiredMonthlyExpense, setDesiredMonthlyExpense] = useState<number>(50000);
+
+  // 2-bucket asset split states (Akcie vs Spořící účet)
+  const [stockAllocationPct, setStockAllocationPct] = useState<number>(70); // 70% akcie, 30% spořák
+  const [savingsReturnPct, setSavingsReturnPct] = useState<number>(4.0); // 4% p.a.
 
   // Advanced toggles
   const [includeCareerEscalator, setIncludeCareerEscalator] = useState<boolean>(true);
@@ -59,9 +63,13 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
       effectiveDca,
       (annualReturnPct / 100) + dividendBonus,
       0.025,
-      horizonYears
+      horizonYears,
+      {
+        stockAllocationPct,
+        savingsNominalReturn: savingsReturnPct / 100,
+      }
     );
-  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears, includeCareerEscalator, dripReinvestment, salaryConfig]);
+  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears, includeCareerEscalator, dripReinvestment, salaryConfig, stockAllocationPct, savingsReturnPct]);
 
   const milestones = useMemo(() => {
     return FireService.getMilestones(
@@ -237,8 +245,74 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
           </div>
         </div>
 
+        {/* 4. Rozdělení úspor: Investice (Akcie & ETF) vs. Spořící účet (Spořák) */}
+        <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Landmark className="w-4 h-4 text-sky-400" />
+              <span className="text-xs font-semibold text-slate-200">
+                Rozdělení úspor: Investice do akcií vs. Spořící účet (s nižším úrokem)
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                {stockAllocationPct}% Akcie
+              </span>
+              <span className="text-slate-600 font-bold">/</span>
+              <span className="px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/20 font-semibold">
+                {100 - stockAllocationPct}% Spořák
+              </span>
+            </div>
+          </div>
+
+          {/* Allocation Slider */}
+          <div className="flex flex-col gap-1.5">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={stockAllocationPct}
+              onChange={(e) => setStockAllocationPct(parseInt(e.target.value, 10))}
+              className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+            />
+            <div className="flex justify-between items-center text-[11px] font-mono">
+              <div className="text-emerald-400 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span>Akcie & ETF ({stockAllocationPct}%):</span>
+                <strong>{Math.round(monthlyDca * (stockAllocationPct / 100)).toLocaleString()} Kč/měs</strong>
+              </div>
+              <div className="text-sky-400 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-sky-400" />
+                <span>Spořící účet ({100 - stockAllocationPct}%):</span>
+                <strong>{Math.round(monthlyDca * ((100 - stockAllocationPct) / 100)).toLocaleString()} Kč/měs</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Savings account interest slider */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2 border-t border-slate-800/60 text-xs">
+            <div className="flex items-center gap-2 text-slate-400">
+              <span>Úrok na spořícím účtu:</span>
+              <span className="font-mono font-bold text-sky-400 text-sm">{savingsReturnPct.toFixed(1)}% p.a.</span>
+              <span className="text-[10px] text-slate-500 font-mono">(čistý úrok po 15% srážkové dani v ČR: {(savingsReturnPct * 0.85).toFixed(2)}% p.a.)</span>
+            </div>
+            <div className="w-full sm:w-64">
+              <input
+                type="range"
+                min="0.5"
+                max="8.0"
+                step="0.5"
+                value={savingsReturnPct}
+                onChange={(e) => setSavingsReturnPct(parseFloat(e.target.value))}
+                className="w-full accent-sky-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Kariérní růst & DRIP volby */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-800/60 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 text-xs">
           <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800/60 cursor-pointer hover:border-slate-700 transition-all">
             <input
               type="checkbox"
@@ -278,37 +352,72 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
 
         {/* Projection KPI summary row */}
         {finalPoint && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-slate-800/80">
-            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <span className="text-[11px] text-slate-400 font-mono">Odhad za {horizonYears} {horizonYears === 1 ? 'rok' : horizonYears < 5 ? 'roky' : 'let'}</span>
-              <MoneyDisplay amount={finalPoint.nominalValue} className="text-xl sm:text-2xl font-bold text-emerald-400 block mt-1" />
-              <div className="text-[10px] text-slate-500 font-mono mt-1">
-                Po inflaci (reálná kupní síla): <MoneyDisplay amount={finalPoint.realValue} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-800/80">
+            {/* 1. Celkový odhad majetku */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80">
+              <span className="text-[11px] text-slate-400 font-mono">
+                Celkový majetek za {horizonYears} {horizonYears === 1 ? 'rok' : horizonYears < 5 ? 'roky' : 'let'}
+              </span>
+              <MoneyDisplay amount={finalPoint.nominalValue} className="text-xl sm:text-2xl font-bold text-white block mt-1" />
+              <div className="text-[10px] text-slate-400 font-mono mt-1">
+                Kupní síla (po inflaci): <MoneyDisplay amount={finalPoint.realValue} className="text-slate-300 font-semibold" />
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <span className="text-[11px] text-slate-400 font-mono">Vlastní vklad vs. Složený zisk</span>
+            {/* 2. Investice (Akcie & ETF) */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-emerald-500/30">
+              <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span>Akcie & ETF ({stockAllocationPct}%)</span>
+                </span>
+                <span className="text-slate-400">
+                  {((finalPoint.stocksValue / (finalPoint.nominalValue || 1)) * 100).toFixed(0)} % majetku
+                </span>
+              </div>
+              <MoneyDisplay amount={finalPoint.stocksValue} className="text-xl sm:text-2xl font-bold text-emerald-400 block" />
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-800">
+                <span>Vklad: <MoneyDisplay amount={finalPoint.stocksPrincipalInvested} /></span>
+                <span className="text-emerald-300 font-semibold">Zisk: +<MoneyDisplay amount={finalPoint.stocksCompoundGain} /></span>
+              </div>
+            </div>
+
+            {/* 3. Spořící účet (Spořák) */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-sky-500/30">
+              <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                <span className="text-sky-400 font-semibold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-sky-400" />
+                  <span>Spořící účet ({100 - stockAllocationPct}%)</span>
+                </span>
+                <span className="text-slate-400">
+                  {((finalPoint.savingsValue / (finalPoint.nominalValue || 1)) * 100).toFixed(0)} % majetku
+                </span>
+              </div>
+              <MoneyDisplay amount={finalPoint.savingsValue} className="text-xl sm:text-2xl font-bold text-sky-400 block" />
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-800">
+                <span>Vklad: <MoneyDisplay amount={finalPoint.savingsPrincipalInvested} /></span>
+                <span className="text-sky-300 font-semibold">Úrok: +<MoneyDisplay amount={finalPoint.savingsInterestGain} /></span>
+              </div>
+            </div>
+
+            {/* 4. Celkové zhodnocení kapitálu */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80">
+              <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                <span>Vložený kapitál celkem</span>
+                <span className="text-indigo-400 font-semibold">
+                  {finalPoint.principalInvested > 0
+                    ? `${(finalPoint.nominalValue / finalPoint.principalInvested).toFixed(2)}x`
+                    : '1.0x'}
+                </span>
+              </div>
               <div className="flex items-baseline justify-between mt-1">
-                <span className="text-xs text-indigo-300">Vlastní vklady z platu:</span>
+                <span className="text-xs text-slate-400">Vklady:</span>
                 <MoneyDisplay amount={finalPoint.principalInvested} className="font-mono font-semibold text-slate-300 text-sm" />
               </div>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-xs text-emerald-400">Zisk ze složeného úročení:</span>
+              <div className="flex items-baseline justify-between mt-0.5 pt-1 border-t border-slate-800">
+                <span className="text-xs text-emerald-400">Zisk celkem:</span>
                 <MoneyDisplay amount={finalPoint.compoundInterestGain} className="font-mono font-bold text-emerald-400 text-sm" />
               </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <span className="text-[11px] text-slate-400 font-mono">Zhodnocení vkladu</span>
-              <div className="text-xl sm:text-2xl font-bold text-slate-100 font-mono mt-1">
-                {finalPoint.principalInvested > 0
-                  ? `${(finalPoint.nominalValue / finalPoint.principalInvested).toFixed(2)}x`
-                  : '1.0x'}
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">
-                Násobek vložených peněz
-              </span>
             </div>
           </div>
         )}

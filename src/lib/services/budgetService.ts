@@ -68,7 +68,14 @@ export class BudgetService {
     expenses: ExpenseCategory[]
   ): MonthlyWealthProjectionPoint[] {
     const totalMonths = config.horizonYears * 12;
-    const rMonth = Math.pow(1 + config.expectedStockReturnPercent / 100, 1 / 12) - 1;
+    const stockAllocRatio = (config.stockAllocationPercent !== undefined ? config.stockAllocationPercent : 100) / 100;
+    const savingsAllocRatio = 1 - stockAllocRatio;
+
+    const rStockMonth = Math.pow(1 + config.expectedStockReturnPercent / 100, 1 / 12) - 1;
+    const savingsAnnualReturn = config.expectedSavingsReturnPercent !== undefined ? config.expectedSavingsReturnPercent : 4.0;
+    // 15% withholding tax on savings interest in Czech Republic
+    const rSavingsMonth = (Math.pow(1 + savingsAnnualReturn / 100, 1 / 12) - 1) * 0.85;
+
     const salaryGrowthRate = config.expectedSalaryGrowthPercent / 100;
     const expenseInflationRate = config.expectedExpenseInflationPercent / 100;
     const divYieldMonthly = (config.dividendYieldPercent / 100) / 12;
@@ -76,11 +83,24 @@ export class BudgetService {
     const baseSalary = salaryConfig.baseMonthlyNetSalaryCZK;
     const initialExpenses = expenses.reduce((sum, e) => sum + e.monthlyAmountCZK, 0);
 
-    let currentPortfolioValue = config.initialNetWorthCZK;
-    let cumulativeInvested = config.initialNetWorthCZK;
+    let currentStocks = config.initialStocksCZK !== undefined
+      ? config.initialStocksCZK
+      : config.initialNetWorthCZK * stockAllocRatio;
+
+    let currentSavings = config.initialSavingsCZK !== undefined
+      ? config.initialSavingsCZK
+      : config.initialNetWorthCZK * savingsAllocRatio;
+
+    let cumulativeStocksInvested = currentStocks;
+    let cumulativeSavingsInvested = currentSavings;
     let cumulativeDividends = 0;
 
     const points: MonthlyWealthProjectionPoint[] = [];
+
+    const initialStocksRounded = Math.round(currentStocks);
+    const initialSavingsRounded = Math.round(currentSavings);
+    const initialStocksInvested = Math.round(cumulativeStocksInvested);
+    const initialSavingsInvested = Math.round(cumulativeSavingsInvested);
 
     // Point 0 (Starting position)
     points.push({
@@ -89,10 +109,16 @@ export class BudgetService {
       salaryCZK: Math.round(baseSalary),
       expensesCZK: Math.round(initialExpenses),
       investedSurplusCZK: 0,
-      cumulativeInvestedCZK: Math.round(cumulativeInvested),
-      portfolioValueCZK: Math.round(currentPortfolioValue),
+      cumulativeInvestedCZK: initialStocksInvested + initialSavingsInvested,
+      portfolioValueCZK: initialStocksRounded + initialSavingsRounded,
       reinvestedDividendsCZK: 0,
       compoundGrowthCZK: 0,
+      stocksValueCZK: initialStocksRounded,
+      stocksInvestedCZK: initialStocksInvested,
+      stocksCompoundGainCZK: 0,
+      savingsValueCZK: initialSavingsRounded,
+      savingsInvestedCZK: initialSavingsInvested,
+      savingsInterestCZK: 0,
     });
 
     for (let m = 1; m <= totalMonths; m++) {
@@ -113,17 +139,32 @@ export class BudgetService {
       const availableSurplus = Math.max(0, monthlySalary + monthBonus - monthlyExpenses);
       const monthlyContribution = availableSurplus * (config.savingsReinvestmentRatePercent / 100);
 
-      // Dividend calculation and DRIP
-      const monthlyDividend = currentPortfolioValue * divYieldMonthly * 0.85; // 15% net tax
+      const stockContribution = monthlyContribution * stockAllocRatio;
+      const savingsContribution = monthlyContribution * savingsAllocRatio;
+
+      // Dividend calculation and DRIP on stocks
+      const monthlyDividend = currentStocks * divYieldMonthly * 0.85; // 15% net tax
       const dripAddition = config.dripEnabled ? monthlyDividend : 0;
       cumulativeDividends += monthlyDividend;
 
-      // Compounding portfolio growth
-      const capitalGain = currentPortfolioValue * rMonth;
-      currentPortfolioValue = currentPortfolioValue + capitalGain + monthlyContribution + dripAddition;
-      cumulativeInvested += monthlyContribution;
+      // Compounding stock growth
+      const stockGain = currentStocks * rStockMonth;
+      currentStocks = currentStocks + stockGain + stockContribution + dripAddition;
+      cumulativeStocksInvested += stockContribution;
 
-      const compoundGrowth = Math.max(0, currentPortfolioValue - cumulativeInvested - (config.dripEnabled ? 0 : cumulativeDividends));
+      // Compounding savings account growth (lower interest)
+      const savingsInterest = currentSavings * rSavingsMonth;
+      currentSavings = currentSavings + savingsInterest + savingsContribution;
+      cumulativeSavingsInvested += savingsContribution;
+
+      const stocksRounded = Math.round(currentStocks);
+      const savingsRounded = Math.round(currentSavings);
+      const stocksInvestedRounded = Math.round(cumulativeStocksInvested);
+      const savingsInvestedRounded = Math.round(cumulativeSavingsInvested);
+
+      const totalPortfolioValue = stocksRounded + savingsRounded;
+      const totalCumulativeInvested = stocksInvestedRounded + savingsInvestedRounded;
+      const totalCompoundGrowth = Math.max(0, totalPortfolioValue - totalCumulativeInvested);
 
       const yearNum = Math.floor((m - 1) / 12) + 1;
       const monthInYear = ((m - 1) % 12) + 1;
@@ -134,10 +175,16 @@ export class BudgetService {
         salaryCZK: Math.round(monthlySalary),
         expensesCZK: Math.round(monthlyExpenses),
         investedSurplusCZK: Math.round(monthlyContribution),
-        cumulativeInvestedCZK: Math.round(cumulativeInvested),
-        portfolioValueCZK: Math.round(currentPortfolioValue),
+        cumulativeInvestedCZK: totalCumulativeInvested,
+        portfolioValueCZK: totalPortfolioValue,
         reinvestedDividendsCZK: Math.round(cumulativeDividends),
-        compoundGrowthCZK: Math.round(compoundGrowth),
+        compoundGrowthCZK: totalCompoundGrowth,
+        stocksValueCZK: stocksRounded,
+        stocksInvestedCZK: stocksInvestedRounded,
+        stocksCompoundGainCZK: Math.max(0, stocksRounded - stocksInvestedRounded),
+        savingsValueCZK: savingsRounded,
+        savingsInvestedCZK: savingsInvestedRounded,
+        savingsInterestCZK: Math.max(0, savingsRounded - savingsInvestedRounded),
       });
     }
 

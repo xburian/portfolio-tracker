@@ -38,15 +38,19 @@ export interface CashflowSnapshot {
 }
 
 export interface WealthProjectionConfig {
-  horizonYears: 1 | 3 | 5 | 10;
+  horizonYears: 1 | 3 | 5 | 10 | 20 | 30;
   initialNetWorthCZK: number;
+  initialStocksCZK?: number;
+  initialSavingsCZK?: number;
   monthlyInvestableSurplusCZK: number;
   expectedStockReturnPercent: number; // e.g. 10.0 % p.a.
+  expectedSavingsReturnPercent?: number; // e.g. 4.0 % p.a. na spořícím účtu
+  stockAllocationPercent?: number; // Kolik % z volné kapacity jde do akcií (např. 70 %, zbytek 30 % na spořák)
   expectedSalaryGrowthPercent: number;// e.g. 5.0 % p.a.
   expectedExpenseInflationPercent: number; // e.g. 3.0 % p.a.
   dividendYieldPercent: number;       // e.g. 2.0 % p.a.
   dripEnabled: boolean;               // Reinvestovat dividendy
-  savingsReinvestmentRatePercent: number; // Kolik % z volné kapacity jde do akcií (výchozí: 100 %)
+  savingsReinvestmentRatePercent: number; // Kolik % z volné kapacity se odkládá celkem (výchozí: 100 %)
 }
 
 export interface MonthlyWealthProjectionPoint {
@@ -55,8 +59,17 @@ export interface MonthlyWealthProjectionPoint {
   salaryCZK: number;
   expensesCZK: number;
   investedSurplusCZK: number;
-  cumulativeInvestedCZK: number;      // Vlastní vklady z platu
-  portfolioValueCZK: number;          // Celková hodnota portfolia
+  cumulativeInvestedCZK: number;      // Vlastní vklady celkem
+  portfolioValueCZK: number;          // Celková hodnota majetku (akcie + spořák)
   reinvestedDividendsCZK: number;     // Kumulované reinvestované dividendy
-  compoundGrowthCZK: number;          // Čistý zisk ze složeného úročení
+  compoundGrowthCZK: number;          // Čistý zisk celkem ze složeného úročení
+
+  // Rozdělení na 2 položky: Investice (Akcie & ETF) vs. Spořící účet
+  stocksValueCZK: number;
+  stocksInvestedCZK: number;
+  stocksCompoundGainCZK: number;
+
+  savingsValueCZK: number;
+  savingsInvestedCZK: number;
+  savingsInterestCZK: number;
 }
