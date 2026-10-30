@@ -1,4 +1,4 @@
-import { CashflowSnapshot, ExpenseCategory, MonthlyWealthProjectionPoint, SalaryConfig, WealthProjectionConfig } from '@/types/budget';
+import { CashflowSnapshot, ExpenseCategory, MonthlyWealthProjectionPoint, SalaryBonusConfig, SalaryConfig, SalaryProjectionYearPoint, WealthProjectionConfig } from '@/types/budget';
 
 export class BudgetService {
   /**
@@ -244,6 +244,60 @@ export class BudgetService {
         savingsInterestCZK: Math.max(0, savingsRounded - savingsInvestedRounded),
         varianceUpperValueCZK: dispersion !== undefined ? Math.round(currentStocksUpper + currentSavings) : undefined,
         varianceLowerValueCZK: dispersion !== undefined ? Math.max(0, Math.round(currentStocksLower + currentSavings)) : undefined,
+      });
+    }
+
+    return points;
+  }
+
+  /**
+   * Generates year-by-year trajectory of net salary evolution based on annual career escalation percentage.
+   */
+  static generateSalaryProgression(
+    baseMonthlyNetSalaryCZK: number,
+    annualIncreasePercentage: number,
+    horizonYears: number = 5,
+    bonuses: SalaryBonusConfig[] = [],
+    annualInflationPercentage: number = 2.5
+  ): SalaryProjectionYearPoint[] {
+    const points: SalaryProjectionYearPoint[] = [];
+    const growthRate = (annualIncreasePercentage || 0) / 100;
+    const inflationRate = (annualInflationPercentage || 0) / 100;
+
+    const baseBonuses = (bonuses || []).reduce((sum, b) => sum + (b.amountNetCZK || 0), 0);
+
+    let cumulativeEarned = 0;
+
+    for (let yr = 0; yr <= horizonYears; yr++) {
+      // Escalator: salary compounds annually
+      const growthFactor = Math.pow(1 + growthRate, yr);
+      const monthlyNet = Math.round(baseMonthlyNetSalaryCZK * growthFactor);
+      const monthlyIncrease = monthlyNet - baseMonthlyNetSalaryCZK;
+      const pctIncrease = baseMonthlyNetSalaryCZK > 0
+        ? Math.round(((monthlyNet - baseMonthlyNetSalaryCZK) / baseMonthlyNetSalaryCZK) * 1000) / 10
+        : 0;
+
+      const annualSalary = monthlyNet * 12;
+      const annualBonuses = Math.round(baseBonuses * growthFactor);
+      const totalAnnualIncome = annualSalary + annualBonuses;
+
+      cumulativeEarned += totalAnnualIncome;
+
+      // Inflation deflation for purchasing power
+      const inflationFactor = Math.pow(1 + inflationRate, yr);
+      const realMonthly = Math.round(monthlyNet / inflationFactor);
+
+      points.push({
+        year: yr,
+        yearLabel: yr === 0 ? 'Nyní' : `${yr}. rok`,
+        monthlyNetSalaryCZK: monthlyNet,
+        monthlyNetIncreaseCZK: monthlyIncrease,
+        percentageIncrease: pctIncrease,
+        annualNetSalaryCZK: annualSalary,
+        annualBonusesCZK: annualBonuses,
+        totalAnnualNetIncomeCZK: totalAnnualIncome,
+        cumulativeNetEarnedCZK: cumulativeEarned,
+        realPurchasingPowerMonthlyCZK: realMonthly,
       });
     }
 

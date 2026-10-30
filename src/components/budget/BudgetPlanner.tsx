@@ -4,6 +4,7 @@ import { usePreferencesStore } from '@/lib/stores/usePreferencesStore';
 import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
 import { ExpenseCategory, SalaryBonusConfig } from '@/types/budget';
 import { WalletCards, Plus, Trash2, Edit2, Check, TrendingUp, Calendar, AlertCircle, ArrowRight, Shield, Sparkles } from 'lucide-react';
+import { SalaryTrajectoryChart } from './SalaryTrajectoryChart';
 
 export const BudgetPlanner: React.FC = () => {
   const salaryConfig = useBudgetStore((s) => s.salaryConfig);
@@ -24,6 +25,14 @@ export const BudgetPlanner: React.FC = () => {
   const [tempSalary, setTempSalary] = useState(salaryConfig.baseMonthlyNetSalaryCZK);
   const [tempPayday, setTempPayday] = useState(salaryConfig.paydayDayOfMonth);
   const [tempIncrease, setTempIncrease] = useState(salaryConfig.annualIncreasePercentage);
+  const [showSalaryTrajectory, setShowSalaryTrajectory] = useState(true);
+
+  const fiveYearSalary = Math.round(
+    salaryConfig.baseMonthlyNetSalaryCZK * Math.pow(1 + (salaryConfig.annualIncreasePercentage || 0) / 100, 5)
+  );
+  const fiveYearGrowthPct = salaryConfig.baseMonthlyNetSalaryCZK > 0
+    ? Math.round(((fiveYearSalary - salaryConfig.baseMonthlyNetSalaryCZK) / salaryConfig.baseMonthlyNetSalaryCZK) * 1000) / 10
+    : 0;
 
   // New expense state
   const [isAddingExpense, setIsAddingExpense] = useState(false);
@@ -87,20 +96,44 @@ export const BudgetPlanner: React.FC = () => {
       {/* 1. Hlavní KPI přehled cashflow */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Čistá mzda + výplata 15. */}
-        <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-sm">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Čistá mzda z práce</span>
-            <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[11px] font-semibold">
-              Výplata 15.
-            </span>
+        <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wider">Čistá mzda z práce</span>
+              <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[11px] font-semibold">
+                Výplata {salaryConfig.paydayDayOfMonth}.
+              </span>
+            </div>
+            <div className="text-2xl sm:text-3xl font-bold text-white">
+              {formatCurrency(snapshot.monthlyNetSalaryCZK, displayCurrency)}
+            </div>
+            <div className="flex items-center justify-between text-xs text-slate-400 mt-1">
+              <span className="flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Do výplaty zbývá: <strong className="text-white">{snapshot.daysUntilPayday} dní</strong></span>
+              </span>
+              <span className="text-emerald-400 font-mono text-[11px] font-semibold">
+                +{salaryConfig.annualIncreasePercentage.toFixed(1)} %/rok
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1.5 pt-1.5 border-t border-slate-800/60 flex items-center justify-between font-mono">
+              <span className="text-slate-500">Za 5 let:</span>
+              <span className="text-emerald-300 font-semibold">
+                {formatCurrency(fiveYearSalary, displayCurrency)}/měs (+{fiveYearGrowthPct} %)
+              </span>
+            </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-bold text-white">
-            {formatCurrency(snapshot.monthlyNetSalaryCZK, displayCurrency)}
+
+          <div className="mt-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowSalaryTrajectory((v) => !v)}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-semibold transition-all border border-indigo-500/30"
+            >
+              <TrendingUp className="w-3.5 h-3.5 text-indigo-400" />
+              <span>{showSalaryTrajectory ? 'Skrýt graf vývoje mzdy' : 'Zobrazit graf vývoje mzdy'}</span>
+            </button>
           </div>
-          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Do výplaty zbývá: <strong className="text-white">{snapshot.daysUntilPayday} dní</strong></span>
-          </p>
         </div>
 
         {/* Měsíční výdaje */}
@@ -161,6 +194,18 @@ export const BudgetPlanner: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Graf vývoje čisté mzdy v čase (Kariérní eskalátor) */}
+      {showSalaryTrajectory && (
+        <SalaryTrajectoryChart
+          baseMonthlyNetSalaryCZK={salaryConfig.baseMonthlyNetSalaryCZK}
+          initialAnnualIncreasePercentage={salaryConfig.annualIncreasePercentage}
+          bonuses={salaryConfig.bonuses}
+          onSaveAnnualIncrease={async (newPct) => {
+            await updateSalaryConfig({ annualIncreasePercentage: newPct });
+          }}
+        />
+      )}
 
       {/* 2. Dvě sekce: Mzda & Kariérní eskalátor vlevo, Výdaje vpravo */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

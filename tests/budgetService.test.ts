@@ -313,4 +313,73 @@ describe('Budget, Cashflow & Wealth Simulation Service (Senior Engineering Test 
       expect(p60.varianceLowerValueCZK!).toBeLessThan(p60.portfolioValueCZK);
     });
   });
+
+  describe('Salary Growth & Career Trajectory Progression', () => {
+    it('calculates year-by-year net salary progression with compounding escalation percentage (e.g. 5% p.a.)', () => {
+      const baseSalary = 80_000;
+      const annualIncrease = 5.0; // +5% ročně
+      const horizon = 5;
+
+      const points = BudgetService.generateSalaryProgression(baseSalary, annualIncrease, horizon);
+      expect(points.length).toBe(6); // Year 0, 1, 2, 3, 4, 5
+
+      // Year 0
+      expect(points[0].year).toBe(0);
+      expect(points[0].yearLabel).toBe('Nyní');
+      expect(points[0].monthlyNetSalaryCZK).toBe(80_000);
+      expect(points[0].monthlyNetIncreaseCZK).toBe(0);
+      expect(points[0].percentageIncrease).toBe(0);
+      expect(points[0].annualNetSalaryCZK).toBe(960_000);
+
+      // Year 1: 80 000 * 1.05 = 84 000
+      expect(points[1].year).toBe(1);
+      expect(points[1].monthlyNetSalaryCZK).toBe(84_000);
+      expect(points[1].monthlyNetIncreaseCZK).toBe(4_000);
+      expect(points[1].percentageIncrease).toBe(5.0);
+
+      // Year 5: 80 000 * (1.05)^5 = 80 000 * 1.27628 = 102 103 (rounded)
+      const p5 = points[5];
+      expect(p5.year).toBe(5);
+      expect(p5.monthlyNetSalaryCZK).toBe(Math.round(80_000 * Math.pow(1.05, 5)));
+      expect(p5.percentageIncrease).toBeCloseTo(27.6, 1);
+      expect(p5.monthlyNetSalaryCZK).toBeGreaterThan(baseSalary);
+    });
+
+    it('correctly scales annual bonuses and compounds cumulative earned net income', () => {
+      const baseSalary = 100_000;
+      const annualIncrease = 10.0;
+      const bonuses = [
+        { id: 'b1', name: '13. plat', month: 12, amountNetCZK: 50_000, isRecurringAnnual: true },
+      ];
+
+      const points = BudgetService.generateSalaryProgression(baseSalary, annualIncrease, 3, bonuses);
+      expect(points.length).toBe(4);
+
+      // Year 0: 100k * 12 + 50k = 1 250 000
+      expect(points[0].annualBonusesCZK).toBe(50_000);
+      expect(points[0].totalAnnualNetIncomeCZK).toBe(1_250_000);
+      expect(points[0].cumulativeNetEarnedCZK).toBe(1_250_000);
+
+      // Cumulative earned must strictly increase monotonically
+      for (let i = 1; i < points.length; i++) {
+        expect(points[i].cumulativeNetEarnedCZK).toBeGreaterThan(points[i - 1].cumulativeNetEarnedCZK);
+        expect(points[i].annualBonusesCZK).toBeGreaterThanOrEqual(50_000);
+      }
+    });
+
+    it('deflates purchasing power by expected inflation (real wage growth)', () => {
+      const baseSalary = 100_000;
+      const annualIncrease = 5.0; // 5% wage growth
+      const inflation = 2.5; // 2.5% inflation
+
+      const points = BudgetService.generateSalaryProgression(baseSalary, annualIncrease, 5, [], inflation);
+      const p5 = points[5];
+
+      // Nominal wage grew by 27.6%
+      expect(p5.monthlyNetSalaryCZK).toBeGreaterThan(125_000);
+      // Real purchasing power also grew (since wage growth 5% > inflation 2.5%), but less than nominal
+      expect(p5.realPurchasingPowerMonthlyCZK).toBeGreaterThan(baseSalary);
+      expect(p5.realPurchasingPowerMonthlyCZK).toBeLessThan(p5.monthlyNetSalaryCZK);
+    });
+  });
 });

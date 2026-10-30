@@ -79,3 +79,16 @@ export interface MonthlyWealthProjectionPoint {
   varianceUpperValueCZK?: number;
   varianceLowerValueCZK?: number;
 }
+
+export interface SalaryProjectionYearPoint {
+  year: number;                          // 0 = Nyní, 1 = 1. rok, ...
+  yearLabel: string;                     // "Nyní", "1. rok", "2. rok", ...
+  monthlyNetSalaryCZK: number;           // e.g. 85_000, 89_250...
+  monthlyNetIncreaseCZK: number;         // Rozdíl oproti výchozímu stavu (+4 250 Kč)
+  percentageIncrease: number;            // Celkový procentuální nárůst oproti výchozímu stavu (+5.0 %)
+  annualNetSalaryCZK: number;            // monthlyNetSalaryCZK * 12
+  annualBonusesCZK: number;              // Roční bonusy v daném roce
+  totalAnnualNetIncomeCZK: number;       // annualNetSalaryCZK + annualBonusesCZK
+  cumulativeNetEarnedCZK: number;        // Celkový kumulovaný čistý výdělek odteď
+  realPurchasingPowerMonthlyCZK: number; // Měsíční čistá mzda očistěná o inflaci (reálná kupní síla)
+}
