@@ -5,11 +5,11 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  ResponsiveContainer,
 } from 'recharts';
 import { ProjectionDataPoint } from '@/lib/services/fireService';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 import { Layers, TrendingUp } from 'lucide-react';
+import { useAutoWidth } from '@/lib/hooks/useAutoWidth';
 
 interface ProjectionChartProps {
   data: ProjectionDataPoint[];
@@ -17,6 +17,7 @@ interface ProjectionChartProps {
 
 export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
   const [chartMode, setChartMode] = useState<'assets' | 'growth'>('assets');
+  const { containerRef, width } = useAutoWidth(900);
 
   return (
     <div className="flex flex-col gap-3">
@@ -53,9 +54,13 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
         </div>
       </div>
 
-      <div className="w-full h-[380px] min-h-[380px] relative">
-        <ResponsiveContainer width="100%" height={380} minHeight={320}>
-          <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+      <div ref={containerRef} className="w-full min-w-0 h-[380px] min-h-[380px] relative overflow-hidden">
+        {data.length === 0 ? (
+          <div className="w-full h-full flex items-center justify-center text-slate-500 text-xs">
+            Žádná data pro zobrazení trajektorie.
+          </div>
+        ) : (
+          <AreaChart width={width} height={380} data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
               {/* Asset mode gradients */}
               <linearGradient id="stocksGradient" x1="0" y1="0" x2="0" y2="1">
@@ -214,7 +219,7 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
               </>
             )}
           </AreaChart>
-        </ResponsiveContainer>
+        )}
       </div>
     </div>
   );
