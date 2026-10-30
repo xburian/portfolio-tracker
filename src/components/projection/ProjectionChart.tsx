@@ -142,6 +142,12 @@ export const ProjectionChart: React.FC<ProjectionChartProps> = ({ data }) => {
                             <MoneyDisplay amount={point.savingsPrincipalInvested} /> / +<MoneyDisplay amount={point.savingsInterestGain} />
                           </span>
                         </div>
+                        {point.savingsSpilloverToStocks !== undefined && point.savingsSpilloverToStocks > 0 && (
+                          <div className="flex items-center justify-between text-[10px] text-amber-300 pl-3 pt-0.5">
+                            <span>Přelito do akcií (nad strop):</span>
+                            <span className="font-semibold">+<MoneyDisplay amount={point.savingsSpilloverToStocks} /></span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between gap-4 py-1 text-slate-400 border-t border-slate-800/80 mt-1 pt-1.5">

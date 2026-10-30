@@ -91,6 +91,13 @@ export class BudgetService {
       ? config.initialSavingsCZK
       : config.initialNetWorthCZK * savingsAllocRatio;
 
+    // If initial savings already exceeds target cap, sweep initial excess into stocks
+    if (config.maxSavingsBalanceCZK !== undefined && config.maxSavingsBalanceCZK > 0 && currentSavings > config.maxSavingsBalanceCZK) {
+      const initialExcess = currentSavings - config.maxSavingsBalanceCZK;
+      currentSavings = config.maxSavingsBalanceCZK;
+      currentStocks += initialExcess;
+    }
+
     let cumulativeStocksInvested = currentStocks;
     let cumulativeSavingsInvested = currentSavings;
     let cumulativeDividends = 0;
@@ -140,22 +147,43 @@ export class BudgetService {
       const monthlyContribution = availableSurplus * (config.savingsReinvestmentRatePercent / 100);
 
       const stockContribution = monthlyContribution * stockAllocRatio;
-      const savingsContribution = monthlyContribution * savingsAllocRatio;
+      let savingsContribution = monthlyContribution * savingsAllocRatio;
 
       // Dividend calculation and DRIP on stocks
       const monthlyDividend = currentStocks * divYieldMonthly * 0.85; // 15% net tax
       const dripAddition = config.dripEnabled ? monthlyDividend : 0;
       cumulativeDividends += monthlyDividend;
 
-      // Compounding stock growth
-      const stockGain = currentStocks * rStockMonth;
-      currentStocks = currentStocks + stockGain + stockContribution + dripAddition;
-      cumulativeStocksInvested += stockContribution;
-
-      // Compounding savings account growth (lower interest)
+      // Savings account interest (with 15% CZ withholding tax)
       const savingsInterest = currentSavings * rSavingsMonth;
-      currentSavings = currentSavings + savingsInterest + savingsContribution;
+      currentSavings += savingsInterest;
+
+      // Emergency Cushion Cap check & Spillover to stocks
+      let monthlySpillover = 0;
+      const maxCap = config.maxSavingsBalanceCZK;
+      if (maxCap !== undefined && maxCap > 0) {
+        if (currentSavings > maxCap) {
+          const excessInterest = currentSavings - maxCap;
+          currentSavings = maxCap;
+          monthlySpillover += excessInterest;
+        }
+
+        const roomRemaining = Math.max(0, maxCap - currentSavings);
+        const actualSavingsContrib = Math.min(savingsContribution, roomRemaining);
+        const excessContribution = savingsContribution - actualSavingsContrib;
+
+        savingsContribution = actualSavingsContrib;
+        monthlySpillover += excessContribution;
+      }
+
+      currentSavings += savingsContribution;
       cumulativeSavingsInvested += savingsContribution;
+
+      // Compounding stock growth + regular contribution + spillover from savings cap + DRIP
+      const stockGain = currentStocks * rStockMonth;
+      const totalStockContribution = stockContribution + monthlySpillover;
+      currentStocks = currentStocks + stockGain + totalStockContribution + dripAddition;
+      cumulativeStocksInvested += totalStockContribution;
 
       const stocksRounded = Math.round(currentStocks);
       const savingsRounded = Math.round(currentSavings);

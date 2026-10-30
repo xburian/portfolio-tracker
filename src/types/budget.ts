@@ -46,6 +46,7 @@ export interface WealthProjectionConfig {
   expectedStockReturnPercent: number; // e.g. 10.0 % p.a.
   expectedSavingsReturnPercent?: number; // e.g. 4.0 % p.a. na spořícím účtu
   stockAllocationPercent?: number; // Kolik % z volné kapacity jde do akcií (např. 70 %, zbytek 30 % na spořák)
+  maxSavingsBalanceCZK?: number; // Cílový strop pro spořící účet (např. 500 000 Kč). Veškerý přebytek nad strop přetéká do investic.
   expectedSalaryGrowthPercent: number;// e.g. 5.0 % p.a.
   expectedExpenseInflationPercent: number; // e.g. 3.0 % p.a.
   dividendYieldPercent: number;       // e.g. 2.0 % p.a.

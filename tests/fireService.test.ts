@@ -82,4 +82,61 @@ describe('FIRE & Milestone Simulator', () => {
       last.savingsInterestGain / last.savingsPrincipalInvested
     );
   });
+
+  it('enforces Emergency Cushion Cap (e.g. 500k CZK) and automatically spills surplus into stocks', () => {
+    const initialCapital = 300_000;
+    const monthlyDCA = 30_000; // 30k/mo
+    const cap = 500_000; // 500k cap on savings
+
+    // 1. Projection with 500k cap
+    const pointsWithCap = FireService.generateProjection(
+      initialCapital,
+      monthlyDCA,
+      0.10, // 10% stocks
+      0.025,
+      10, // 10 years
+      {
+        stockAllocationPct: 50, // 50% stocks (15k), 50% savings (15k)
+        savingsNominalReturn: 0.04,
+        maxSavingsBalanceCZK: cap,
+      }
+    );
+
+    // 2. Projection without cap (savings grows unconstrained)
+    const pointsWithoutCap = FireService.generateProjection(
+      initialCapital,
+      monthlyDCA,
+      0.10,
+      0.025,
+      10,
+      {
+        stockAllocationPct: 50,
+        savingsNominalReturn: 0.04,
+        // no cap
+      }
+    );
+
+    // At all points with cap, savingsValue must NEVER exceed 500,000 CZK
+    for (const p of pointsWithCap) {
+      expect(p.savingsValue).toBeLessThanOrEqual(cap);
+      expect(p.stocksValue + p.savingsValue).toBe(p.nominalValue);
+      expect(p.stocksPrincipalInvested + p.savingsPrincipalInvested).toBe(p.principalInvested);
+    }
+
+    const lastWithCap = pointsWithCap[pointsWithCap.length - 1];
+    const lastWithoutCap = pointsWithoutCap[pointsWithoutCap.length - 1];
+
+    // Savings must stay anchored at exactly 500,000 CZK
+    expect(lastWithCap.savingsValue).toBe(cap);
+    // Without cap, savings would have grown to well over 1.5M
+    expect(lastWithoutCap.savingsValue).toBeGreaterThan(1_500_000);
+
+    // Spillover to stocks must have occurred and be tracked
+    expect(lastWithCap.savingsSpilloverToStocks).toBeDefined();
+    expect(lastWithCap.savingsSpilloverToStocks!).toBeGreaterThan(1_000_000);
+
+    // Total ending wealth and stock portfolio MUST be strictly higher when excess cash spills over to 10% stocks!
+    expect(lastWithCap.stocksValue).toBeGreaterThan(lastWithoutCap.stocksValue);
+    expect(lastWithCap.nominalValue).toBeGreaterThan(lastWithoutCap.nominalValue);
+  });
 });

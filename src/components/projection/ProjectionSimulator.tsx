@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Sparkles, TrendingUp, Compass, Flame, Wallet, RefreshCw, Zap, Landmark } from 'lucide-react';
+import { Sparkles, TrendingUp, Compass, Flame, Wallet, RefreshCw, Zap, Landmark, Shield } from 'lucide-react';
 import { ValuationDetail } from '@/types/portfolio';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 import { FireService } from '@/lib/services/fireService';
@@ -30,6 +30,7 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
   // 2-bucket asset split states (Akcie vs Spořící účet)
   const [stockAllocationPct, setStockAllocationPct] = useState<number>(70); // 70% akcie, 30% spořák
   const [savingsReturnPct, setSavingsReturnPct] = useState<number>(4.0); // 4% p.a.
+  const [maxSavingsCap, setMaxSavingsCap] = useState<number>(500000); // 500k Kč strop na spořícím účtu (přebytek přetéká do investic), 0 = neomezeno
 
   // Advanced toggles
   const [includeCareerEscalator, setIncludeCareerEscalator] = useState<boolean>(true);
@@ -67,9 +68,10 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
       {
         stockAllocationPct,
         savingsNominalReturn: savingsReturnPct / 100,
+        maxSavingsBalanceCZK: maxSavingsCap > 0 ? maxSavingsCap : undefined,
       }
     );
-  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears, includeCareerEscalator, dripReinvestment, salaryConfig, stockAllocationPct, savingsReturnPct]);
+  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears, includeCareerEscalator, dripReinvestment, salaryConfig, stockAllocationPct, savingsReturnPct, maxSavingsCap]);
 
   const milestones = useMemo(() => {
     return FireService.getMilestones(
@@ -309,6 +311,62 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
               />
             </div>
           </div>
+
+          {/* Emergency Fund Cap (Cílový strop na spořáku & Automatický přeliv do investic) */}
+          <div className="flex flex-col gap-2 pt-2.5 border-t border-slate-800/60 text-xs">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+              <div className="space-y-0.5">
+                <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Cílový strop na spořícím účtu (Emergency polštář & automatický přeliv do akcií):</span>
+                </span>
+                <p className="text-[11px] text-slate-400">
+                  Jakmile naspoříte tuto rezervu (např. 500 000 Kč), další úspory i připsané úroky automaticky přetékají do investic v akciích.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  step="50000"
+                  value={maxSavingsCap}
+                  onChange={(e) => setMaxSavingsCap(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  className="w-32 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono font-bold text-amber-300 text-right focus:outline-none focus:border-amber-500"
+                />
+                <span className="text-slate-500 font-mono text-[11px]">Kč</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[10px] text-slate-500">Rychlé volby:</span>
+              {[200_000, 300_000, 500_000, 1_000_000].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setMaxSavingsCap(preset)}
+                  className={`px-2.5 py-0.5 rounded-md text-[10px] font-mono transition-all ${
+                    maxSavingsCap === preset
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                      : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800'
+                  }`}
+                >
+                  {(preset / 1000).toLocaleString()} tis. Kč
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setMaxSavingsCap(0)}
+                className={`px-2.5 py-0.5 rounded-md text-[10px] font-mono transition-all ${
+                  maxSavingsCap === 0
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                    : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800'
+                }`}
+              >
+                Bez limitu
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Kariérní růst & DRIP volby */}
@@ -383,20 +441,40 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
             </div>
 
             {/* 3. Spořící účet (Spořák) */}
-            <div className="p-4 rounded-xl bg-slate-900/60 border border-sky-500/30">
-              <div className="flex items-center justify-between text-[11px] font-mono mb-1">
-                <span className="text-sky-400 font-semibold flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-sky-400" />
-                  <span>Spořící účet ({100 - stockAllocationPct}%)</span>
-                </span>
-                <span className="text-slate-400">
-                  {((finalPoint.savingsValue / (finalPoint.nominalValue || 1)) * 100).toFixed(0)} % majetku
-                </span>
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-sky-500/30 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                  <span className="text-sky-400 font-semibold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-sky-400" />
+                    <span>Spořící účet ({100 - stockAllocationPct}%)</span>
+                  </span>
+                  {maxSavingsCap > 0 && finalPoint.savingsValue >= maxSavingsCap ? (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-semibold border border-amber-500/30">
+                      Strop {Math.round(maxSavingsCap / 1000)}k dosažen
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">
+                      {((finalPoint.savingsValue / (finalPoint.nominalValue || 1)) * 100).toFixed(0)} % majetku
+                    </span>
+                  )}
+                </div>
+                <MoneyDisplay amount={finalPoint.savingsValue} className="text-xl sm:text-2xl font-bold text-sky-400 block" />
               </div>
-              <MoneyDisplay amount={finalPoint.savingsValue} className="text-xl sm:text-2xl font-bold text-sky-400 block" />
-              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-800">
-                <span>Vklad: <MoneyDisplay amount={finalPoint.savingsPrincipalInvested} /></span>
-                <span className="text-sky-300 font-semibold">Úrok: +<MoneyDisplay amount={finalPoint.savingsInterestGain} /></span>
+
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-800">
+                  <span>Vklad: <MoneyDisplay amount={finalPoint.savingsPrincipalInvested} /></span>
+                  <span className="text-sky-300 font-semibold">Úrok: +<MoneyDisplay amount={finalPoint.savingsInterestGain} /></span>
+                </div>
+                {finalPoint.savingsSpilloverToStocks !== undefined && finalPoint.savingsSpilloverToStocks > 0 && (
+                  <div className="flex items-center justify-between text-[10px] text-amber-300 font-mono mt-1 pt-1 border-t border-slate-800/60">
+                    <span className="flex items-center gap-1">
+                      <TrendingUp className="w-3 h-3 text-amber-400" />
+                      <span>Přelito do akcií:</span>
+                    </span>
+                    <strong className="text-emerald-300">+<MoneyDisplay amount={finalPoint.savingsSpilloverToStocks} /></strong>
+                  </div>
+                )}
               </div>
             </div>
 

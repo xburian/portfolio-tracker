@@ -249,5 +249,36 @@ describe('Budget, Cashflow & Wealth Simulation Service (Senior Engineering Test 
       expect(finalSavings.savingsValueCZK).toBe(finalSavings.portfolioValueCZK);
       expect(finalStocks.stocksValueCZK).toBe(finalStocks.portfolioValueCZK);
     });
+
+    it('enforces savings account target buffer cap (e.g. 500 000 CZK) with automatic spillover to stocks in monthly cashflow simulation', () => {
+      const cap = 500_000;
+      const config: WealthProjectionConfig = {
+        horizonYears: 10,
+        initialNetWorthCZK: 200_000,
+        monthlyInvestableSurplusCZK: 35_000,
+        expectedStockReturnPercent: 10.0,
+        expectedSavingsReturnPercent: 4.0,
+        stockAllocationPercent: 50, // 50% stocks, 50% savings
+        maxSavingsBalanceCZK: cap,
+        expectedSalaryGrowthPercent: 5.0,
+        expectedExpenseInflationPercent: 2.5,
+        dividendYieldPercent: 1.5,
+        dripEnabled: true,
+        savingsReinvestmentRatePercent: 100,
+      };
+
+      const points = BudgetService.simulateWealthProjection(config, mockSalary, mockExpenses);
+      expect(points.length).toBe(121); // Month 0 to 120
+
+      for (const p of points) {
+        expect(p.savingsValueCZK).toBeLessThanOrEqual(cap);
+        expect(p.stocksValueCZK + p.savingsValueCZK).toBe(p.portfolioValueCZK);
+        expect(p.stocksInvestedCZK + p.savingsInvestedCZK).toBe(p.cumulativeInvestedCZK);
+      }
+
+      const finalPoint = points[points.length - 1];
+      expect(finalPoint.savingsValueCZK).toBe(cap);
+      expect(finalPoint.stocksValueCZK).toBeGreaterThan(finalPoint.savingsValueCZK);
+    });
   });
 });

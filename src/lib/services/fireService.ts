@@ -14,6 +14,9 @@ export interface ProjectionDataPoint {
   savingsValue: number;
   savingsPrincipalInvested: number;
   savingsInterestGain: number;
+
+  // Kumulovaný přeliv peněz ze spořícího účtu do akcií po dosažení stropu
+  savingsSpilloverToStocks?: number;
 }
 
 export interface MilestoneResult {
@@ -107,6 +110,7 @@ export class FireService {
     options: {
       stockAllocationPct?: number; // e.g. 70 (%)
       savingsNominalReturn?: number; // e.g. 0.04 (4% p.a.)
+      maxSavingsBalanceCZK?: number; // e.g. 500_000 (Kč limit pro spořící účet)
       initialStocks?: number;
       initialSavings?: number;
     } = {}
@@ -123,6 +127,7 @@ export class FireService {
     const jSavings = (savingsGross * 0.85) / 12;
 
     const iMonth = annualInflation / 12;
+    const maxSavingsCap = options.maxSavingsBalanceCZK;
 
     let currentStocks = options.initialStocks !== undefined
       ? options.initialStocks
@@ -132,8 +137,16 @@ export class FireService {
       ? options.initialSavings
       : initialValue * savingsAllocRatio;
 
+    // If initial savings already exceeds cap, sweep initial excess to stocks
+    if (maxSavingsCap !== undefined && maxSavingsCap > 0 && currentSavings > maxSavingsCap) {
+      const initialExcess = currentSavings - maxSavingsCap;
+      currentSavings = maxSavingsCap;
+      currentStocks += initialExcess;
+    }
+
     let totalStocksInvested = currentStocks;
     let totalSavingsInvested = currentSavings;
+    let cumulativeSpillover = 0;
 
     const initialStocksRounded = Math.round(currentStocks);
     const initialSavingsRounded = Math.round(currentSavings);
@@ -152,19 +165,42 @@ export class FireService {
       savingsValue: initialSavingsRounded,
       savingsPrincipalInvested: initialSavingsRounded,
       savingsInterestGain: 0,
+      savingsSpilloverToStocks: 0,
     });
 
     for (let m = 1; m <= totalMonths; m++) {
       const stockDCA = monthlyDCA * stockAllocRatio;
-      const savingsDCA = monthlyDCA * savingsAllocRatio;
+      let savingsDCA = monthlyDCA * savingsAllocRatio;
 
-      // Stocks: Annuity due (compounding monthly)
-      currentStocks = (currentStocks + stockDCA) * (1 + jStock);
-      totalStocksInvested += stockDCA;
+      // 1. Savings interest accrual (with 15% CZ withholding tax)
+      const savingsInterest = currentSavings * jSavings;
+      currentSavings += savingsInterest;
 
-      // Savings account: Lower interest rate (compounding monthly)
-      currentSavings = (currentSavings + savingsDCA) * (1 + jSavings);
+      // 2. Emergency Cushion Cap check & Spillover
+      let monthlySpillover = 0;
+      if (maxSavingsCap !== undefined && maxSavingsCap > 0) {
+        if (currentSavings > maxSavingsCap) {
+          const excessInterest = currentSavings - maxSavingsCap;
+          currentSavings = maxSavingsCap;
+          monthlySpillover += excessInterest;
+        }
+
+        const roomRemaining = Math.max(0, maxSavingsCap - currentSavings);
+        const actualSavingsDCA = Math.min(savingsDCA, roomRemaining);
+        const excessContribution = savingsDCA - actualSavingsDCA;
+
+        savingsDCA = actualSavingsDCA;
+        monthlySpillover += excessContribution;
+      }
+
+      cumulativeSpillover += monthlySpillover;
+      currentSavings += savingsDCA;
       totalSavingsInvested += savingsDCA;
+
+      // 3. Stocks investment + spillover
+      const totalStockDCA = stockDCA + monthlySpillover;
+      currentStocks = (currentStocks + totalStockDCA) * (1 + jStock);
+      totalStocksInvested += totalStockDCA;
 
       const stocksRounded = Math.round(currentStocks);
       const savingsRounded = Math.round(currentSavings);
@@ -193,6 +229,7 @@ export class FireService {
           savingsValue: savingsRounded,
           savingsPrincipalInvested: savingsInvestedRounded,
           savingsInterestGain: Math.max(0, savingsRounded - savingsInvestedRounded),
+          savingsSpilloverToStocks: Math.round(cumulativeSpillover),
         });
       }
     }
