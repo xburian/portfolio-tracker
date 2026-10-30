@@ -30,6 +30,20 @@ export interface MonthlyDividendAggregate {
   transactionsCount: number;
 }
 
+export type DividendPeriod = 'ALL' | 'YTD' | '1Y' | '3Y' | string; // e.g. "2026", "2025"
+
+export interface AnnualDividendAggregate {
+  year: string;                       // "2026", "2025", ...
+  isYTD: boolean;                     // true pokud je to aktuální rok
+  totalNetCZK: number;
+  totalGrossCZK: number;
+  totalTaxCZK: number;
+  effectiveTaxRate: number;
+  transactionsCount: number;
+  monthlyAverageCZK: number;          // Průměr na měsíc v daném roce
+  yoyGrowthPercent?: number;          // Meziroční růst v % oproti předchozímu roku
+}
+
 export interface HoldingDividendSummary {
   normalizedTicker: string;
   name: string;

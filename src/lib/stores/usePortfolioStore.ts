@@ -7,7 +7,7 @@ import { NlpClusterService } from '@/lib/services/nlpClusterService';
 import { MarketPriceService } from '@/lib/services/marketPriceService';
 import { CurrencyService } from '@/lib/services/currencyService';
 import { StorageCompactionService, CompactionReport } from '@/lib/services/storageCompactionService';
-import { DividendTransaction, MonthlyDividendAggregate, HoldingDividendSummary } from '@/types/dividend';
+import { DividendTransaction, MonthlyDividendAggregate, HoldingDividendSummary, AnnualDividendAggregate } from '@/types/dividend';
 import { DividendService } from '@/lib/services/dividendService';
 import { CurrencyDecompositionService } from '@/lib/services/currencyDecompositionService';
 import { HoldingDailyChange, CurrencyAttributionBreakdown } from '@/types/attribution';
@@ -69,6 +69,8 @@ interface PortfolioState {
   getSummary: (displayCurrency: CurrencyCode) => PortfolioSummary;
   getDividends: () => DividendTransaction[];
   getDividendsByMonth: () => MonthlyDividendAggregate[];
+  getDividendsByYear: () => AnnualDividendAggregate[];
+  getAvailableDividendYears: () => string[];
   getDividendsByHolding: () => HoldingDividendSummary[];
   getDividendSummary: () => { totalNetCZK: number; totalGrossCZK: number; totalTaxCZK: number; avgMonthlyNetCZK: number; effectiveTaxRate: number; count: number };
   getHoldingDailyChanges: () => HoldingDailyChange[];
@@ -957,6 +959,14 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
   getDividendsByMonth: () => {
     return DividendService.aggregateByMonth(get().dividends);
+  },
+
+  getDividendsByYear: () => {
+    return DividendService.aggregateByYear(get().dividends);
+  },
+
+  getAvailableDividendYears: () => {
+    return DividendService.getAvailableYears(get().dividends);
   },
 
   getDividendsByHolding: () => {

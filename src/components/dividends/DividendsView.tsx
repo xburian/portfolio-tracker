@@ -1,25 +1,45 @@
 import React, { useState } from 'react';
 import { usePortfolioStore } from '@/lib/stores/usePortfolioStore';
 import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
-import { BadgePercent, DollarSign, Calendar, ShieldCheck, ArrowUpRight, Search, Filter } from 'lucide-react';
+import { DividendService } from '@/lib/services/dividendService';
+import { DividendPeriod } from '@/types/dividend';
+import {
+  BadgePercent,
+  DollarSign,
+  Calendar,
+  ShieldCheck,
+  ArrowUpRight,
+  Search,
+  Filter,
+  TrendingUp,
+  Clock,
+  CalendarRange,
+  ChevronRight,
+} from 'lucide-react';
 
 export const DividendsView: React.FC = () => {
-  const getDividends = usePortfolioStore((s) => s.getDividends);
-  const getDividendsByMonth = usePortfolioStore((s) => s.getDividendsByMonth);
-  const getDividendsByHolding = usePortfolioStore((s) => s.getDividendsByHolding);
-  const getDividendSummary = usePortfolioStore((s) => s.getDividendSummary);
+  const allDividends = usePortfolioStore((s) => s.getDividends());
+  const holdings = usePortfolioStore((s) => s.holdings);
+  const lots = usePortfolioStore((s) => s.lots);
   const displayCurrency = useCurrencyStore((s) => s.displayCurrency);
   const formatCurrency = useCurrencyStore((s) => s.formatCurrency);
 
   const [search, setSearch] = useState('');
   const [selectedHolding, setSelectedHolding] = useState<string | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<DividendPeriod>('ALL');
 
-  const summary = getDividendSummary();
-  const monthlyAggregates = getDividendsByMonth();
-  const holdingAggregates = getDividendsByHolding();
-  const allDividends = getDividends();
+  // Compute available years and annual aggregates from all dividends
+  const availableYears = DividendService.getAvailableYears(allDividends);
+  const annualAggregates = DividendService.aggregateByYear(allDividends);
 
-  const filteredDividends = allDividends.filter(d => {
+  // Filter dividends by active period
+  const periodDividends = DividendService.filterByPeriod(allDividends, selectedPeriod);
+  const periodSummary = DividendService.calculateOverallSummary(periodDividends);
+  const periodMonthlyAggregates = DividendService.aggregateByMonth(periodDividends);
+  const periodHoldingAggregates = DividendService.aggregateByHolding(periodDividends, holdings, lots);
+
+  // Filter for search & selected stock
+  const filteredDividends = periodDividends.filter(d => {
     const matchesSearch = d.rawTicker.toLowerCase().includes(search.toLowerCase()) ||
       d.normalizedTicker.toLowerCase().includes(search.toLowerCase()) ||
       (d.comment && d.comment.toLowerCase().includes(search.toLowerCase()));
@@ -28,39 +48,179 @@ export const DividendsView: React.FC = () => {
   });
 
   // Calculate highest monthly amount for bar chart scaling
-  const maxMonthlyNet = Math.max(1, ...monthlyAggregates.map(m => m.totalNetCZK));
+  const maxMonthlyNet = Math.max(1, ...periodMonthlyAggregates.map(m => m.totalNetCZK));
+
+  const getPeriodLabel = (period: DividendPeriod): string => {
+    if (period === 'ALL') return 'Celé období (vše)';
+    if (period === 'YTD') return `Tento rok (${new Date().getFullYear()} YTD)`;
+    if (period === '1Y') return 'Posledních 12 měsíců (1Y)';
+    if (period === '3Y') return 'Poslední 3 roky (3Y)';
+    return `Kalendářní rok ${period}`;
+  };
 
   return (
     <div className="space-y-6">
-      {/* 1. Horní souhrnná KPI lišta */}
+      {/* 0. Období & Rychlé filtry (Vše, YTD, 1Y, Roky) */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm">
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+          <CalendarRange className="w-4 h-4 text-indigo-400" />
+          <span>Filtrovat dividendy za období:</span>
+          <span className="text-indigo-400 font-mono text-[11px] font-normal ml-1">
+            ({getPeriodLabel(selectedPeriod)})
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-950/80 border border-slate-800 rounded-xl text-xs">
+          <button
+            type="button"
+            onClick={() => setSelectedPeriod('ALL')}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+              selectedPeriod === 'ALL'
+                ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Celá historie
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedPeriod('YTD')}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+              selectedPeriod === 'YTD'
+                ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Tento rok (YTD)
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedPeriod('1Y')}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+              selectedPeriod === '1Y'
+                ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Posledních 12M
+          </button>
+
+          {availableYears.map((yr) => (
+            <button
+              key={yr}
+              type="button"
+              onClick={() => setSelectedPeriod(yr)}
+              className={`px-2.5 py-1.5 rounded-lg font-mono font-medium transition-all ${
+                selectedPeriod === yr
+                  ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {yr}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 1. Roční přehledy (Annual Breakdown Cards) */}
+      {annualAggregates.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Přehled dividend po jednotlivých letech (kliknutím vyfiltrujete):</span>
+            </span>
+            <span className="text-[11px] text-slate-500 font-mono">
+              Meziroční růst (YoY)
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {annualAggregates.map((yr) => {
+              const isActive = selectedPeriod === yr.year;
+              return (
+                <button
+                  key={yr.year}
+                  type="button"
+                  onClick={() => setSelectedPeriod(isActive ? 'ALL' : yr.year)}
+                  className={`text-left p-3.5 rounded-xl border transition-all flex flex-col justify-between ${
+                    isActive
+                      ? 'bg-indigo-950/60 border-indigo-500 ring-1 ring-indigo-500/50 shadow-lg shadow-indigo-500/10'
+                      : 'bg-slate-900/60 border-slate-800/80 hover:bg-slate-850 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="font-bold text-white font-mono flex items-center gap-1">
+                      <span>Rok {yr.year}</span>
+                      {yr.isYTD && (
+                        <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-sans uppercase">
+                          YTD
+                        </span>
+                      )}
+                    </span>
+                    {yr.yoyGrowthPercent !== undefined && (
+                      <span
+                        className={`text-[10px] font-mono font-semibold ${
+                          yr.yoyGrowthPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                      >
+                        {yr.yoyGrowthPercent >= 0 ? `+${yr.yoyGrowthPercent}%` : `${yr.yoyGrowthPercent}%`}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="text-base sm:text-lg font-bold text-emerald-400 mt-0.5">
+                    {formatCurrency(yr.totalNetCZK, displayCurrency)}
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-800/60">
+                    <span>Ø {formatCurrency(yr.monthlyAverageCZK, displayCurrency)}/m</span>
+                    <span>{yr.transactionsCount} výplat</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 2. Horní souhrnná KPI lišta pro vybrané období */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-sm">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Celkem vyplaceno (Čisté)</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">
+              {selectedPeriod === 'ALL'
+                ? 'Celkem vyplaceno (Čisté)'
+                : selectedPeriod === 'YTD'
+                ? 'Vyplaceno letos (YTD čisté)'
+                : selectedPeriod === '1Y'
+                ? 'Vyplaceno za 12M (Čisté)'
+                : `Vyplaceno v ${selectedPeriod} (Čisté)`}
+            </span>
             <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <BadgePercent className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-bold text-white">
-            {formatCurrency(summary.totalNetCZK, displayCurrency)}
+            {formatCurrency(periodSummary.totalNetCZK, displayCurrency)}
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Hrubá částka: {formatCurrency(summary.totalGrossCZK, displayCurrency)}
+            Hrubá dividenda: {formatCurrency(periodSummary.totalGrossCZK, displayCurrency)}
           </p>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-sm">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Měsíční průměr</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Měsíční průměr (období)</span>
             <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
               <Calendar className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-bold text-white">
-            {formatCurrency(summary.avgMonthlyNetCZK, displayCurrency)} <span className="text-xs font-normal text-slate-400">/ měs</span>
+            {formatCurrency(periodSummary.avgMonthlyNetCZK, displayCurrency)} <span className="text-xs font-normal text-slate-400">/ měs</span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Počet výplatních měsíců: {monthlyAggregates.length}
+            Aktivních výplatních měsíců: {periodMonthlyAggregates.length}
           </p>
         </div>
 
@@ -72,48 +232,50 @@ export const DividendsView: React.FC = () => {
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-bold text-rose-400">
-            -{formatCurrency(summary.totalTaxCZK, displayCurrency)}
+            -{formatCurrency(periodSummary.totalTaxCZK, displayCurrency)}
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Efektivní daňová sazba: <strong className="text-slate-200">{summary.effectiveTaxRate.toFixed(1)} %</strong>
+            Efektivní daňová sazba: <strong className="text-slate-200">{periodSummary.effectiveTaxRate.toFixed(1)} %</strong>
           </p>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-sm">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Celkem transakcí</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Počet plateb v období</span>
             <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
               <DollarSign className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-bold text-white">
-            {summary.count}
+            {periodSummary.count}
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Platící tituly: {holdingAggregates.length} pozic
+            Platící tituly v období: {periodHoldingAggregates.length} pozic
           </p>
         </div>
       </div>
 
-      {/* 2. Měsíční sloupcový graf vývoje dividend */}
+      {/* 3. Měsíční sloupcový graf vývoje dividend pro vybrané období */}
       <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-sm">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-6">
           <div>
             <h3 className="text-base font-semibold text-white">Měsíční vývoj dividendového příjmu</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Čistý pasivní příjem připsaný v jednotlivých měsících</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Čistý pasivní příjem připsaný v jednotlivých měsících ({getPeriodLabel(selectedPeriod)})
+            </p>
           </div>
           <span className="text-xs font-medium text-slate-400 bg-slate-800/80 px-3 py-1 rounded-full">
-            Posledních {monthlyAggregates.length} měsíců
+            {periodMonthlyAggregates.length} měsíců s výplatou
           </span>
         </div>
 
-        {monthlyAggregates.length === 0 ? (
+        {periodMonthlyAggregates.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-sm">
-            Zatím nebyly načteny žádné dividendové transakce. Naimportujte výpis brokera (XTB, Degiro).
+            V tomto období nebyly zaznamenány žádné dividendové platby.
           </div>
         ) : (
           <div className="h-64 flex items-end gap-2 sm:gap-3 overflow-x-auto pb-4 pt-6 scrollbar-none">
-            {monthlyAggregates.map((m) => {
+            {periodMonthlyAggregates.map((m) => {
               const heightPct = Math.max(6, Math.round((m.totalNetCZK / maxMonthlyNet) * 100));
               return (
                 <div key={m.yearMonth} className="flex-1 min-w-[42px] max-w-[70px] flex flex-col items-center gap-2 group">
@@ -136,17 +298,22 @@ export const DividendsView: React.FC = () => {
         )}
       </div>
 
-      {/* 3. Dividendoví plátci & Detailní transakční tabulka */}
+      {/* 4. Dividendoví plátci & Detailní transakční tabulka */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Levý panel: Žebříček dividendových plátců a Yield on Cost */}
         <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-sm">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-white">Top plátci dividend</h3>
-            <span className="text-xs text-slate-400">{holdingAggregates.length} titulů</span>
+            <div>
+              <h3 className="text-sm font-semibold text-white">Top plátci v období</h3>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {getPeriodLabel(selectedPeriod)}
+              </p>
+            </div>
+            <span className="text-xs text-slate-400">{periodHoldingAggregates.length} titulů</span>
           </div>
 
           <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-            {holdingAggregates.map((h) => {
+            {periodHoldingAggregates.map((h) => {
               const isSelected = selectedHolding === h.normalizedTicker;
               return (
                 <button
@@ -177,8 +344,10 @@ export const DividendsView: React.FC = () => {
               );
             })}
 
-            {holdingAggregates.length === 0 && (
-              <div className="py-6 text-center text-xs text-slate-500">Žádná dividendová data</div>
+            {periodHoldingAggregates.length === 0 && (
+              <div className="py-6 text-center text-xs text-slate-500">
+                V tomto období nebyly vyplaceny žádné dividendy.
+              </div>
             )}
           </div>
         </div>
@@ -190,7 +359,9 @@ export const DividendsView: React.FC = () => {
               <div>
                 <h3 className="text-sm font-semibold text-white">Transakční historie dividend</h3>
                 <p className="text-xs text-slate-400">
-                  {selectedHolding ? `Filtrováno pro: ${selectedHolding}` : 'Všechny připsané dividendy a sražená daň'}
+                  {selectedHolding
+                    ? `Filtrováno pro: ${selectedHolding} (${getPeriodLabel(selectedPeriod)})`
+                    : `Připsané dividendy a daň (${getPeriodLabel(selectedPeriod)})`}
                 </p>
               </div>
 
@@ -210,7 +381,15 @@ export const DividendsView: React.FC = () => {
                     onClick={() => setSelectedHolding(null)}
                     className="text-xs px-2.5 py-1.5 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700"
                   >
-                    Zrušit filtr
+                    Zrušit ticker
+                  </button>
+                )}
+                {selectedPeriod !== 'ALL' && (
+                  <button
+                    onClick={() => setSelectedPeriod('ALL')}
+                    className="text-xs px-2.5 py-1.5 rounded-xl bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30"
+                  >
+                    Zrušit období
                   </button>
                 )}
               </div>
@@ -264,7 +443,7 @@ export const DividendsView: React.FC = () => {
                   {filteredDividends.length === 0 && (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-slate-500">
-                        Nebyly nalezeny žádné transakce odpovídající filtru.
+                        Nebyly nalezeny žádné dividendové transakce pro vybrané období a filtr.
                       </td>
                     </tr>
                   )}
@@ -274,7 +453,10 @@ export const DividendsView: React.FC = () => {
           </div>
 
           <div className="mt-3 pt-3 border-t border-slate-800/60 text-[11px] text-slate-500 flex justify-between items-center">
-            <span>Zobrazeno {Math.min(50, filteredDividends.length)} z {filteredDividends.length} plateb</span>
+            <span>
+              Zobrazeno {Math.min(50, filteredDividends.length)} z {filteredDividends.length} plateb
+              {selectedPeriod !== 'ALL' && ` v období ${getPeriodLabel(selectedPeriod)}`}
+            </span>
             <span>Dividendy jsou automaticky párovány ze srážkové daně brokera</span>
           </div>
         </div>

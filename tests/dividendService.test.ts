@@ -331,5 +331,201 @@ describe('Dividend Ingestion & Aggregation Service', () => {
     expect(summary.totalGrossCZK).toBe(0);
     expect(summary.avgMonthlyNetCZK).toBe(0);
     expect(summary.effectiveTaxRate).toBe(0);
+
+    const emptyYears = DividendService.getAvailableYears([]);
+    expect(emptyYears).toEqual([]);
+
+    const emptyAnnual = DividendService.aggregateByYear([]);
+    expect(emptyAnnual).toEqual([]);
+  });
+
+  describe('Period & Annual Dividend Aggregation (Senior Engineering Suite)', () => {
+    const mockMultiYearDividends: DividendTransaction[] = [
+      {
+        id: 'div-2024-1',
+        profileId: 'p1',
+        accountId: 'a1',
+        brokerId: 'XTB',
+        rawTicker: 'O.US',
+        normalizedTicker: 'O',
+        paymentDateUtc: '2024-03-15T12:00:00.000Z',
+        yearMonth: '2024-03',
+        grossAmount: 100,
+        withholdingTax: 15,
+        netAmount: 85,
+        currency: 'USD',
+        fxRateToCZK: 23.0,
+        grossAmountCZK: 2300,
+        withholdingTaxCZK: 345,
+        netAmountCZK: 1955,
+      },
+      {
+        id: 'div-2024-2',
+        profileId: 'p1',
+        accountId: 'a1',
+        brokerId: 'XTB',
+        rawTicker: 'O.US',
+        normalizedTicker: 'O',
+        paymentDateUtc: '2024-09-15T12:00:00.000Z',
+        yearMonth: '2024-09',
+        grossAmount: 100,
+        withholdingTax: 15,
+        netAmount: 85,
+        currency: 'USD',
+        fxRateToCZK: 23.0,
+        grossAmountCZK: 2300,
+        withholdingTaxCZK: 345,
+        netAmountCZK: 1955,
+      },
+      {
+        id: 'div-2025-1',
+        profileId: 'p1',
+        accountId: 'a1',
+        brokerId: 'XTB',
+        rawTicker: 'O.US',
+        normalizedTicker: 'O',
+        paymentDateUtc: '2025-06-15T12:00:00.000Z',
+        yearMonth: '2025-06',
+        grossAmount: 200,
+        withholdingTax: 30,
+        netAmount: 170,
+        currency: 'USD',
+        fxRateToCZK: 24.0,
+        grossAmountCZK: 4800,
+        withholdingTaxCZK: 720,
+        netAmountCZK: 4080,
+      },
+      {
+        id: 'div-2026-1',
+        profileId: 'p1',
+        accountId: 'a1',
+        brokerId: 'XTB',
+        rawTicker: 'O.US',
+        normalizedTicker: 'O',
+        paymentDateUtc: '2026-02-15T12:00:00.000Z',
+        yearMonth: '2026-02',
+        grossAmount: 150,
+        withholdingTax: 22.5,
+        netAmount: 127.5,
+        currency: 'USD',
+        fxRateToCZK: 24.0,
+        grossAmountCZK: 3600,
+        withholdingTaxCZK: 540,
+        netAmountCZK: 3060,
+      },
+    ];
+
+    it('getAvailableYears extracts distinct years sorted descending', () => {
+      const years = DividendService.getAvailableYears(mockMultiYearDividends);
+      expect(years).toEqual(['2026', '2025', '2024']);
+    });
+
+    it('filterByPeriod filters by calendar year correctly', () => {
+      const divs2024 = DividendService.filterByPeriod(mockMultiYearDividends, '2024');
+      expect(divs2024.length).toBe(2);
+      expect(divs2024.every(d => d.yearMonth.startsWith('2024'))).toBe(true);
+
+      const divs2025 = DividendService.filterByPeriod(mockMultiYearDividends, '2025');
+      expect(divs2025.length).toBe(1);
+      expect(divs2025[0].id).toBe('div-2025-1');
+
+      const divsAll = DividendService.filterByPeriod(mockMultiYearDividends, 'ALL');
+      expect(divsAll.length).toBe(4);
+    });
+
+    it('filterByPeriod filters YTD and 1Y relative to reference date', () => {
+      // Simulate reference date in October 2026
+      const refDate = new Date('2026-10-30T12:00:00Z');
+
+      const divsYTD = DividendService.filterByPeriod(mockMultiYearDividends, 'YTD', refDate);
+      expect(divsYTD.length).toBe(1);
+      expect(divsYTD[0].id).toBe('div-2026-1');
+
+      // 1Y from 2026-10-30 covers back to 2025-10-30
+      // mockMultiYearDividends has 2026-02-15 (within 1Y) and 2025-06-15 (>1Y ago)
+      const divs1Y = DividendService.filterByPeriod(mockMultiYearDividends, '1Y', refDate);
+      expect(divs1Y.length).toBe(1);
+      expect(divs1Y[0].id).toBe('div-2026-1');
+
+      // 3Y from 2026-10-30 covers back to 2023-10-30
+      const divs3Y = DividendService.filterByPeriod(mockMultiYearDividends, '3Y', refDate);
+      expect(divs3Y.length).toBe(4);
+    });
+
+    it('aggregateByYear computes accurate annual sums, YoY growth and monthly averages', () => {
+      // Reference date: Month 10 of 2026
+      const refDate = new Date('2026-10-15T00:00:00Z');
+      const annual = DividendService.aggregateByYear(mockMultiYearDividends, refDate);
+
+      expect(annual.length).toBe(3);
+      // Sorted descending: 2026, 2025, 2024
+      const [yr2026, yr2025, yr2024] = annual;
+
+      // 2024 stats:
+      // Net: 1955 + 1955 = 3910 CZK
+      // Gross: 2300 + 2300 = 4600 CZK
+      // Tax: 345 + 345 = 690 CZK
+      // Effective tax: 690 / 4600 = 15.0%
+      // Monthly avg: 3910 / 12 = 325.83 CZK
+      // YoY: undefined (oldest year)
+      expect(yr2024.year).toBe('2024');
+      expect(yr2024.isYTD).toBe(false);
+      expect(yr2024.totalNetCZK).toBe(3910);
+      expect(yr2024.totalGrossCZK).toBe(4600);
+      expect(yr2024.effectiveTaxRate).toBe(15.0);
+      expect(yr2024.monthlyAverageCZK).toBe(325.83);
+      expect(yr2024.yoyGrowthPercent).toBeUndefined();
+
+      // 2025 stats:
+      // Net: 4080 CZK
+      // Monthly avg: 4080 / 12 = 340 CZK
+      // YoY: (4080 - 3910) / 3910 * 100 = 4.35% -> rounded to 4.3%
+      expect(yr2025.year).toBe('2025');
+      expect(yr2025.isYTD).toBe(false);
+      expect(yr2025.totalNetCZK).toBe(4080);
+      expect(yr2025.monthlyAverageCZK).toBe(340);
+      expect(yr2025.yoyGrowthPercent).toBe(4.3);
+
+      // 2026 stats (YTD in October -> 10 months elapsed):
+      // Net: 3060 CZK
+      // Monthly avg (YTD run-rate): 3060 / 10 = 306 CZK
+      // YoY: (3060 - 4080) / 4080 * 100 = -25.0%
+      expect(yr2026.year).toBe('2026');
+      expect(yr2026.isYTD).toBe(true);
+      expect(yr2026.totalNetCZK).toBe(3060);
+      expect(yr2026.monthlyAverageCZK).toBe(306);
+      expect(yr2026.yoyGrowthPercent).toBe(-25.0);
+    });
+
+    it('processes real historical XTB USD multi-year statement with annual aggregation', async () => {
+      const filePath = 'sample_data/XTB_USD_2235930.xlsx';
+      if (!fs.existsSync(filePath)) return;
+
+      const buffer = fs.readFileSync(filePath);
+      const snapshot: FileSnapshot = {
+        fileName: 'XTB_USD_2235930.xlsx',
+        fileExtension: '.xlsx',
+        sizeBytes: buffer.byteLength,
+        data: new Uint8Array(buffer).buffer,
+      };
+
+      const adapter = new XtbAdapter();
+      const result = await adapter.parse(snapshot);
+      expect(result.dividends).toBeDefined();
+
+      const years = DividendService.getAvailableYears(result.dividends!);
+      expect(years.length).toBeGreaterThan(1);
+
+      const annual = DividendService.aggregateByYear(result.dividends!);
+      expect(annual.length).toBe(years.length);
+
+      for (const row of annual) {
+        expect(row.totalNetCZK).toBeGreaterThan(0);
+        expect(row.totalGrossCZK).toBeGreaterThanOrEqual(row.totalNetCZK);
+        expect(row.transactionsCount).toBeGreaterThan(0);
+        expect(row.monthlyAverageCZK).toBeGreaterThan(0);
+        expect(row.effectiveTaxRate).toBeGreaterThan(0);
+      }
+    });
   });
 });
