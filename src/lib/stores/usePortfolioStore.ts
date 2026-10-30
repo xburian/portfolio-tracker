@@ -12,6 +12,7 @@ import { DividendService } from '@/lib/services/dividendService';
 import { CurrencyDecompositionService } from '@/lib/services/currencyDecompositionService';
 import { HoldingDailyChange, CurrencyAttributionBreakdown } from '@/types/attribution';
 import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
+import { ServerSyncService } from '@/lib/services/serverSyncService';
 
 interface PortfolioState {
   // Profiles
@@ -96,6 +97,12 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   initFromDb: async () => {
     set({ isLoading: true });
     try {
+      // Check if client DB is empty; if so, attempt pull from backend In-Memory / Redis storage
+      const existingAccountsCount = await db.accounts.count();
+      if (existingAccountsCount === 0) {
+        await ServerSyncService.pullFromBackend().catch(() => {});
+      }
+
       let profiles = await db.profiles.toArray();
       if (profiles.length === 0) {
         const defaultProfile: Profile = {
@@ -130,6 +137,9 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
       set({ profiles, activeProfileId: activeId });
       await get().switchProfile(activeId);
+
+      // Keep backend In-Memory storage synchronized
+      ServerSyncService.pushToBackend().catch(console.warn);
     } catch (e) {
       console.error('Failed to init from DB', e);
       set({ isLoading: false });
@@ -204,6 +214,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const profiles = await db.profiles.toArray();
     set({ profiles });
     await get().switchProfile(newProfile.id);
+    ServerSyncService.pushToBackend().catch(console.warn);
     return newProfile.id;
   },
 
@@ -222,6 +233,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const profiles = await db.profiles.toArray();
     set({ profiles });
     await get().switchProfile(DEFAULT_PROFILE_ID);
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   compactDatabase: async () => {
@@ -357,6 +369,9 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
     // Refresh state
     await get().switchProfile(activeProfileId);
+
+    // Push to backend In-Memory / Redis storage
+    ServerSyncService.pushToBackend().catch(console.warn);
 
     return {
       accountName: account.name,
@@ -540,6 +555,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       holdings: holdings.map(h => h.id === holdingId ? updated : h),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   saveAutoRule: async (pattern: string, clusterId: string, clusterName: string) => {
@@ -567,6 +583,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const clusterResult = await NlpClusterService.autoClusterHoldings(allHoldings);
     await db.holdings.bulkPut(clusterResult.updatedHoldings);
     await get().initFromDb();
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   updateHoldingTags: async (holdingId: string, tags: string[]) => {
@@ -579,6 +596,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       holdings: holdings.map(h => h.id === holdingId ? updated : h),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   clearAllData: async () => {
@@ -605,6 +623,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     }
 
     await get().switchProfile(activeProfileId);
+    ServerSyncService.pushToBackend(true).catch(console.warn);
   },
 
   updateAccountCash: async (accountId: string, cashBalances: Record<CurrencyCode, number>) => {
@@ -622,6 +641,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       accounts: accounts.map(a => a.id === accountId ? updated : a),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   addCashAccount: async (name: string, balances: Record<CurrencyCode, number>, brokerId: BrokerId = 'BANK') => {
@@ -659,6 +679,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       accounts: [...accounts, newAccount],
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
     return accountId;
   },
 
@@ -676,6 +697,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       lots: lots.filter(l => l.accountId !== accountId),
       selectedAccountFilter: get().selectedAccountFilter === accountId ? null : get().selectedAccountFilter,
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   setAccountFilter: (accId) => set({ selectedAccountFilter: accId }),

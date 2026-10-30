@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { db, DEFAULT_PROFILE_ID } from '@/types/../lib/db';
 import { CashflowSnapshot, ExpenseCategory, SalaryConfig } from '@/types/budget';
 import { BudgetService } from '@/lib/services/budgetService';
+import { ServerSyncService } from '@/lib/services/serverSyncService';
 
 interface BudgetState {
   profileId: string;
@@ -63,6 +64,7 @@ export const useBudgetStore = create<BudgetState>((set, get) => ({
       }
 
       set({ salaryConfig: salary, expenses: expList, isLoading: false });
+      ServerSyncService.pushToBackend().catch(console.warn);
     } catch (err) {
       console.error('Failed to load budget from Dexie:', err);
       set({ isLoading: false });
@@ -79,6 +81,7 @@ export const useBudgetStore = create<BudgetState>((set, get) => ({
     };
     await db.salaryConfigs.put(updated);
     set({ salaryConfig: updated });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   addExpenseCategory: async (expense) => {
@@ -91,6 +94,7 @@ export const useBudgetStore = create<BudgetState>((set, get) => ({
     };
     await db.expenseCategories.put(newCategory);
     set({ expenses: [...expenses, newCategory] });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   updateExpenseCategory: async (id, partial) => {
@@ -101,12 +105,14 @@ export const useBudgetStore = create<BudgetState>((set, get) => ({
       await db.expenseCategories.put(target);
     }
     set({ expenses: updated });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   deleteExpenseCategory: async (id) => {
     const { expenses } = get();
     await db.expenseCategories.delete(id);
     set({ expenses: expenses.filter(e => e.id !== id) });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   getCashflowSnapshot: () => {

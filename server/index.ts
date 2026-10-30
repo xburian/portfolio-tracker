@@ -5,7 +5,7 @@ import { initStorage, getStorage } from './storage';
 import { AuthService } from './auth/authService';
 import { AuthMiddleware } from './auth/authMiddleware';
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = process.env.NODE_ENV === 'test' ? 0 : Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
 const VITE_DEV_SERVER = 'http://localhost:5173';
 
@@ -18,6 +18,37 @@ const quoteCache = new Map<string, { data: any; expiresAt: number }>();
 let fxCache: { rates: Record<string, number>; expiresAt: number } | null = null;
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+async function getStorageDiagnostics(storageAdapter: typeof storage) {
+  const status = await storageAdapter.getStatus();
+  const allKeys = await storageAdapter.keys('*');
+  const authKeys = allKeys.filter(k => k.startsWith('user:') || k.startsWith('refresh_token:') || k.startsWith('user_by_email:'));
+  const portfolioKeys = allKeys.filter(k => k.startsWith('portfolio:'));
+
+  const entityBreakdown: Record<string, number> = {};
+  for (const k of portfolioKeys) {
+    if (k.endsWith(':meta')) continue;
+    const parts = k.split(':');
+    const col = parts[parts.length - 1];
+    const raw = await storageAdapter.get(k);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        entityBreakdown[col] = (entityBreakdown[col] || 0) + (Array.isArray(parsed) ? parsed.length : 1);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return {
+    status,
+    totalKeys: allKeys.length,
+    authKeysCount: authKeys.length,
+    portfolioKeysCount: portfolioKeys.length,
+    entityBreakdown,
+  };
+}
 
 async function fetchYahooQuote(symbol: string): Promise<any | null> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
@@ -119,15 +150,17 @@ const server = serve({
       return new Response(JSON.stringify(data), { status, headers: h });
     };
 
-    // 2. Health check (includes storage status)
+    // 2. Health check (includes storage status & entity metrics)
     if (url.pathname === '/api/health') {
-      const storageStatus = await storage.getStatus();
+      const diag = await getStorageDiagnostics(storage);
       return jsonResponse({
         status: 'healthy',
         bunVersion: Bun.version,
         uptimeSeconds: Math.floor(process.uptime()),
         cachedQuotesCount: quoteCache.size,
-        storage: storageStatus,
+        storage: diag.status,
+        totalKeys: diag.totalKeys,
+        portfolioEntities: diag.entityBreakdown,
       });
     }
 
@@ -223,14 +256,149 @@ const server = serve({
 
     // 3f. GET /api/auth/status (Storage and Auth Diagnostics)
     if (url.pathname === '/api/auth/status' && req.method === 'GET') {
-      const storageStatus = await storage.getStatus();
+      const diag = await getStorageDiagnostics(storage);
       return jsonResponse({
-        storage: storageStatus,
+        storage: diag.status,
+        entityBreakdown: diag.entityBreakdown,
+        totalKeys: diag.totalKeys,
+        authKeysCount: diag.authKeysCount,
+        portfolioKeysCount: diag.portfolioKeysCount,
         auth: {
           accessTokenExpirySeconds: 900, // 15m
           refreshTokenExpirySeconds: 7 * 24 * 60 * 60, // 7 days
           algorithm: 'HS256',
         },
+      });
+    }
+
+    // 3g. GET /api/sync (Pull user portfolio & budget data from In-Memory / Redis storage)
+    if (url.pathname === '/api/sync' && req.method === 'GET') {
+      const payload = await AuthMiddleware.authenticate(req);
+      const userId = payload?.sub || 'default_user';
+
+      const COLLECTIONS = [
+        'profiles',
+        'accounts',
+        'holdings',
+        'lots',
+        'clusters',
+        'rules',
+        'cashLedger',
+        'dividends',
+        'salaryConfigs',
+        'expenseCategories',
+      ] as const;
+
+      const data: Record<string, any> = {};
+      let hasData = false;
+
+      for (const col of COLLECTIONS) {
+        const raw = await storage.get(`portfolio:${userId}:${col}`);
+        if (raw) {
+          try {
+            data[col] = JSON.parse(raw);
+            if (Array.isArray(data[col]) ? data[col].length > 0 : data[col] !== null) {
+              hasData = true;
+            }
+          } catch {
+            data[col] = [];
+          }
+        } else {
+          data[col] = [];
+        }
+      }
+
+      const metaRaw = await storage.get(`portfolio:${userId}:meta`);
+      const meta = metaRaw ? JSON.parse(metaRaw) : null;
+
+      return jsonResponse({
+        success: true,
+        userId,
+        hasData,
+        data,
+        meta,
+      });
+    }
+
+    // 3h. POST /api/sync (Push all user portfolio & budget data into In-Memory / Redis storage)
+    if (url.pathname === '/api/sync' && req.method === 'POST') {
+      try {
+        const payload = await AuthMiddleware.authenticate(req);
+        const userId = payload?.sub || 'default_user';
+
+        const body = await req.json();
+        const payloadData = body.data || body;
+
+        const COLLECTIONS = [
+          'profiles',
+          'accounts',
+          'holdings',
+          'lots',
+          'clusters',
+          'rules',
+          'cashLedger',
+          'dividends',
+          'salaryConfigs',
+          'expenseCategories',
+        ] as const;
+
+        const counts: Record<string, number> = {};
+
+        for (const col of COLLECTIONS) {
+          if (payloadData[col] !== undefined) {
+            const val = payloadData[col];
+            await storage.set(`portfolio:${userId}:${col}`, JSON.stringify(val));
+            counts[col] = Array.isArray(val) ? val.length : 1;
+          }
+        }
+
+        const meta = {
+          userId,
+          syncedAt: new Date().toISOString(),
+          counts,
+        };
+        await storage.set(`portfolio:${userId}:meta`, JSON.stringify(meta));
+
+        return jsonResponse({
+          success: true,
+          userId,
+          syncedAt: meta.syncedAt,
+          counts,
+        });
+      } catch (err: any) {
+        return jsonResponse({ error: err.message || 'Chyba při synchronizaci' }, 500);
+      }
+    }
+
+    // 3i. DELETE /api/sync (Wipe user data from In-Memory / Redis storage)
+    if (url.pathname === '/api/sync' && req.method === 'DELETE') {
+      try {
+        const payload = await AuthMiddleware.authenticate(req);
+        const userId = payload?.sub || 'default_user';
+
+        const keysToDelete = await storage.keys(`portfolio:${userId}:*`);
+        for (const k of keysToDelete) {
+          await storage.del(k);
+        }
+
+        return jsonResponse({
+          success: true,
+          userId,
+          deletedKeysCount: keysToDelete.length,
+        });
+      } catch (err: any) {
+        return jsonResponse({ error: err.message || 'Chyba při mazání dat' }, 500);
+      }
+    }
+
+    // 3j. GET /api/storage/inspect (Storage Diagnostic Inspector)
+    if (url.pathname === '/api/storage/inspect' && req.method === 'GET') {
+      const diag = await getStorageDiagnostics(storage);
+      const allKeys = await storage.keys('*');
+      return jsonResponse({
+        storage: diag.status,
+        ...diag,
+        keys: allKeys.map(k => (k.startsWith('refresh_token:') ? 'refresh_token:***' : k)),
       });
     }
 
@@ -385,3 +553,5 @@ const server = serve({
 });
 
 console.log(`⚡ Bun Portfolio Server running at http://localhost:${server.port} [${process.env.NODE_ENV || 'development'}]`);
+
+export { server };
