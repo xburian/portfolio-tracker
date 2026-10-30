@@ -1,6 +1,8 @@
 import * as XLSX from 'xlsx';
 import { AssetClass, BrokerId, CurrencyCode, CashLedgerTransaction } from '@/types/portfolio';
 import { FileSnapshot, IBrokerAdapter, IngestionResult } from '@/types/broker';
+import { DividendTransaction } from '@/types/dividend';
+import { MarketPriceService } from '@/lib/services/marketPriceService';
 
 export class XtbAdapter implements IBrokerAdapter {
   readonly id: BrokerId = 'XTB';
@@ -251,6 +253,7 @@ export class XtbAdapter implements IBrokerAdapter {
 
     // Parse Cash Operations if sheet exists
     const cashOps: IngestionResult['cashOperations'] = [];
+    const parsedDividends: DividendTransaction[] = [];
     const cashSheetName = wb.SheetNames.find(s => s.toLowerCase().includes('cash operation'));
     if (cashSheetName) {
       const cashSheet = wb.Sheets[cashSheetName];
@@ -265,9 +268,13 @@ export class XtbAdapter implements IBrokerAdapter {
         }
       }
 
+      const rawDividends: Array<{ id: string; ticker: string; comment: string; amount: number; timeUtc: string; timeMs: number }> = [];
+      const rawTaxes: Array<{ id: string; ticker: string; comment: string; amount: number; timeUtc: string; timeMs: number }> = [];
+
       if (cashHeaderIdx !== -1) {
         const headers = cashData[cashHeaderIdx].map(c => String(c ?? '').trim().toLowerCase());
         const cType = headers.indexOf('type');
+        const cTicker = headers.indexOf('ticker');
         const cTime = headers.indexOf('time');
         const cAmount = headers.indexOf('amount');
         const cId = headers.indexOf('id');
@@ -280,13 +287,19 @@ export class XtbAdapter implements IBrokerAdapter {
           const typeStr = String(row[cType] ?? '').trim().toLowerCase();
           const amount = parseNumber(row[cAmount]);
           const time = parseDate(row[cTime]);
+          const timeMs = new Date(time).getTime();
           const id = String(row[cId] ?? `cash-${r}`);
           const comment = String(row[cComment] ?? '');
+          const rowTicker = cTicker !== -1 ? String(row[cTicker] ?? '').trim() : '';
 
           let opType: CashLedgerTransaction['type'] = 'OTHER';
-          if (typeStr.includes('dividend')) opType = 'DIVIDEND';
-          else if (typeStr.includes('tax') || typeStr.includes('wht')) opType = 'TAX';
-          else if (typeStr.includes('interest')) opType = 'INTEREST';
+          if (typeStr.includes('dividend')) {
+            opType = 'DIVIDEND';
+            rawDividends.push({ id, ticker: rowTicker, comment, amount, timeUtc: time, timeMs });
+          } else if (typeStr.includes('tax') || typeStr.includes('wht') || typeStr.includes('withholding')) {
+            opType = 'TAX';
+            rawTaxes.push({ id, ticker: rowTicker, comment, amount, timeUtc: time, timeMs });
+          } else if (typeStr.includes('interest')) opType = 'INTEREST';
           else if (typeStr.includes('transfer')) opType = 'TRANSFER';
           else if (typeStr.includes('deposit')) opType = 'DEPOSIT';
           else if (typeStr.includes('withdrawal')) opType = 'WITHDRAWAL';
@@ -302,6 +315,61 @@ export class XtbAdapter implements IBrokerAdapter {
           });
         }
       }
+
+      // Pair Gross Dividends with Withholding Taxes
+      const usedTaxIndices = new Set<number>();
+
+      for (const div of rawDividends) {
+        let matchedTaxIdx = -1;
+        let minTimeDiff = Infinity;
+
+        // Try exact ticker match first, within 48h
+        for (let tIdx = 0; tIdx < rawTaxes.length; tIdx++) {
+          if (usedTaxIndices.has(tIdx)) continue;
+          const tax = rawTaxes[tIdx];
+          const tickerMatch = (div.ticker && tax.ticker && div.ticker.toUpperCase() === tax.ticker.toUpperCase()) ||
+            (div.ticker && tax.comment.toUpperCase().includes(div.ticker.toUpperCase()));
+
+          if (tickerMatch) {
+            const diff = Math.abs(div.timeMs - tax.timeMs);
+            if (diff <= 48 * 3600 * 1000 && diff < minTimeDiff) {
+              minTimeDiff = diff;
+              matchedTaxIdx = tIdx;
+            }
+          }
+        }
+
+        let taxAmount = 0;
+        if (matchedTaxIdx !== -1) {
+          usedTaxIndices.add(matchedTaxIdx);
+          taxAmount = Math.abs(rawTaxes[matchedTaxIdx].amount);
+        }
+
+        const gross = Math.max(0, div.amount);
+        const net = Math.max(0, gross - taxAmount);
+        const resolvedTicker = div.ticker || div.comment.split(/\s+/)[0] || 'UNKNOWN';
+        const normTicker = MarketPriceService.normalizeTicker(resolvedTicker);
+
+        parsedDividends.push({
+          id: `div_xtb_${accountNumber}_${div.id}`,
+          profileId: '', // Assigned by importer/store
+          accountId: `xtb-${accountNumber}`,
+          brokerId: 'XTB',
+          rawTicker: resolvedTicker,
+          normalizedTicker: normTicker,
+          paymentDateUtc: div.timeUtc,
+          yearMonth: div.timeUtc.substring(0, 7),
+          grossAmount: gross,
+          withholdingTax: taxAmount,
+          netAmount: net,
+          currency: accountCurrency,
+          fxRateToCZK: 1.0, // Calculated during import/rate sync
+          grossAmountCZK: gross,
+          withholdingTaxCZK: taxAmount,
+          netAmountCZK: net,
+          comment: div.comment,
+        });
+      }
     }
 
     return {
@@ -315,6 +383,7 @@ export class XtbAdapter implements IBrokerAdapter {
       holdings: finalHoldings,
       lots: finalLots,
       cashOperations: cashOps,
+      dividends: parsedDividends,
       warnings,
     };
   }

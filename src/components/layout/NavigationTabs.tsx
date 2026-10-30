@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Layers, PieChart, Sparkles, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Layers, PieChart, Sparkles, TrendingUp, WalletCards, BadgePercent } from 'lucide-react';
 import { ActiveTab, usePreferencesStore } from '@/lib/stores/usePreferencesStore';
 
 export const NavigationTabs: React.FC = () => {
@@ -7,11 +7,13 @@ export const NavigationTabs: React.FC = () => {
   const setActiveTab = usePreferencesStore((s) => s.setActiveTab);
 
   const tabs: Array<{ id: ActiveTab; label: string; icon: React.ElementType }> = [
-    { id: 'dashboard', label: 'Přehled', icon: LayoutDashboard },
+    { id: 'dashboard', label: 'Přehled & Denní změny', icon: LayoutDashboard },
     { id: 'holdings', label: 'Pozice a akcie', icon: Layers },
+    { id: 'budget', label: 'Rozpočet & Mzda', icon: WalletCards },
+    { id: 'dividends', label: 'Dividendy', icon: BadgePercent },
+    { id: 'projection', label: 'Predikce bohatství', icon: TrendingUp },
     { id: 'breakdown', label: 'Vizuální rozpad', icon: PieChart },
     { id: 'clusters', label: 'Klastry & Pravidla', icon: Sparkles },
-    { id: 'projection', label: 'Simulátor 5–30 let', icon: TrendingUp },
   ];
 
   return (

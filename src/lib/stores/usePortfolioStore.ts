@@ -7,6 +7,11 @@ import { NlpClusterService } from '@/lib/services/nlpClusterService';
 import { MarketPriceService } from '@/lib/services/marketPriceService';
 import { CurrencyService } from '@/lib/services/currencyService';
 import { StorageCompactionService, CompactionReport } from '@/lib/services/storageCompactionService';
+import { DividendTransaction, MonthlyDividendAggregate, HoldingDividendSummary } from '@/types/dividend';
+import { DividendService } from '@/lib/services/dividendService';
+import { CurrencyDecompositionService } from '@/lib/services/currencyDecompositionService';
+import { HoldingDailyChange, CurrencyAttributionBreakdown } from '@/types/attribution';
+import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
 
 interface PortfolioState {
   // Profiles
@@ -19,6 +24,7 @@ interface PortfolioState {
   lots: PositionLot[];
   clusters: Cluster[];
   rules: AutoTagRule[];
+  dividends: DividendTransaction[];
   
   selectedAccountFilter: string | null;
   selectedClusterFilter: string | null;
@@ -60,6 +66,12 @@ interface PortfolioState {
   // Computed Selectors
   getValuations: (displayCurrency: CurrencyCode, includeCash?: boolean) => ValuationDetail[];
   getSummary: (displayCurrency: CurrencyCode) => PortfolioSummary;
+  getDividends: () => DividendTransaction[];
+  getDividendsByMonth: () => MonthlyDividendAggregate[];
+  getDividendsByHolding: () => HoldingDividendSummary[];
+  getDividendSummary: () => { totalNetCZK: number; totalGrossCZK: number; totalTaxCZK: number; avgMonthlyNetCZK: number; effectiveTaxRate: number; count: number };
+  getHoldingDailyChanges: () => HoldingDailyChange[];
+  getCurrencyAttribution: () => CurrencyAttributionBreakdown[];
 }
 
 export const usePortfolioStore = create<PortfolioState>((set, get) => ({
@@ -71,6 +83,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   lots: [],
   clusters: [],
   rules: [],
+  dividends: [],
 
   selectedAccountFilter: null,
   selectedClusterFilter: null,
@@ -130,12 +143,13 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     }
 
     try {
-      let [accs, hlds, lts, cls, rls] = await Promise.all([
+      let [accs, hlds, lts, cls, rls, divs] = await Promise.all([
         db.accounts.toArray(),
         db.holdings.toArray(),
         db.lots.toArray(),
         db.clusters.toArray(),
         db.rules.toArray(),
+        db.dividends.toArray(),
       ]);
 
       if (profileId !== 'consolidated') {
@@ -144,6 +158,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         lts = lts.filter(l => (l.profileId || DEFAULT_PROFILE_ID) === profileId);
         cls = cls.filter(c => (c.profileId || DEFAULT_PROFILE_ID) === profileId || !c.profileId);
         rls = rls.filter(r => (r.profileId || DEFAULT_PROFILE_ID) === profileId || !r.profileId);
+        divs = divs.filter(d => (d.profileId || DEFAULT_PROFILE_ID) === profileId);
       }
 
       set({
@@ -152,6 +167,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         lots: lts,
         clusters: cls,
         rules: rls,
+        dividends: divs,
         isLoading: false,
       });
 
@@ -303,6 +319,24 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       await db.cashLedger.bulkPut(ops);
     }
 
+    // Save dividends if present
+    if (result.dividends && result.dividends.length > 0) {
+      const rates = useCurrencyStore.getState().rates;
+      const divs = result.dividends.map(div => {
+        const fxRate = rates[div.currency] || 1.0;
+        return {
+          ...div,
+          profileId: targetProfileId,
+          accountId,
+          fxRateToCZK: fxRate,
+          grossAmountCZK: Math.round(div.grossAmount * fxRate * 100) / 100,
+          withholdingTaxCZK: Math.round(div.withholdingTax * fxRate * 100) / 100,
+          netAmountCZK: Math.round(div.netAmount * fxRate * 100) / 100,
+        };
+      });
+      await db.dividends.bulkPut(divs);
+    }
+
     // Run auto-clustering across all holdings
     const allHoldings = await db.holdings.toArray();
     const clusterResult = await NlpClusterService.autoClusterHoldings(allHoldings);
@@ -393,6 +427,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       db.lots.clear(),
       db.cashLedger.clear(),
       db.clusters.clear(),
+      db.dividends.clear(),
     ]);
 
     // 2. Fetch sample statements from backend
@@ -459,6 +494,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
           return {
             ...h,
             currentPrice: q.price,
+            previousClosePrice: q.previousClose || q.price,
             lastPriceUpdate: new Date().toISOString(),
           };
         }
@@ -545,6 +581,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         db.clusters.clear(),
         db.rules.clear(),
         db.cashLedger.clear(),
+        db.dividends.clear(),
       ]);
     } else {
       await Promise.all([
@@ -553,6 +590,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         db.lots.where('profileId').equals(activeProfileId).delete(),
         db.clusters.where('profileId').equals(activeProfileId).delete(),
         db.cashLedger.where('profileId').equals(activeProfileId).delete(),
+        db.dividends.where('profileId').equals(activeProfileId).delete(),
       ]);
     }
 
@@ -879,5 +917,33 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       holdingsCount: allValuations.length,
       accountsCount: relevantAccounts.length,
     };
+  },
+
+  getDividends: () => {
+    return get().dividends;
+  },
+
+  getDividendsByMonth: () => {
+    return DividendService.aggregateByMonth(get().dividends);
+  },
+
+  getDividendsByHolding: () => {
+    return DividendService.aggregateByHolding(get().dividends, get().holdings, get().lots);
+  },
+
+  getDividendSummary: () => {
+    return DividendService.calculateOverallSummary(get().dividends);
+  },
+
+  getHoldingDailyChanges: () => {
+    const { holdings } = get();
+    const rates = useCurrencyStore.getState().rates;
+    return CurrencyDecompositionService.calculateHoldingDailyChanges(holdings, rates);
+  },
+
+  getCurrencyAttribution: () => {
+    const { holdings, lots } = get();
+    const rates = useCurrencyStore.getState().rates;
+    return CurrencyDecompositionService.calculateCurrencyAttribution(holdings, lots, rates);
   },
 }));

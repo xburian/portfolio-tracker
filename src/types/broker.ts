@@ -1,4 +1,5 @@
 import { Account, AssetClass, BrokerId, CurrencyCode, Holding, PositionLot, CashLedgerTransaction } from './portfolio';
+import { DividendTransaction } from './dividend';
 
 export interface FileSnapshot {
   fileName: string;
@@ -36,6 +37,7 @@ export interface IngestionResult {
     reportedNetProfit?: number;
   }>;
   cashOperations?: CashLedgerTransaction[];
+  dividends?: DividendTransaction[];
   warnings: string[];
 }
 
