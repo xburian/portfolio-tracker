@@ -161,13 +161,24 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         divs = divs.filter(d => (d.profileId || DEFAULT_PROFILE_ID) === profileId);
       }
 
+      const recalculatedDivs = divs.map(d => {
+        const rate = CurrencyService.getRate(d.currency, 'CZK');
+        return {
+          ...d,
+          fxRateToCZK: rate,
+          grossAmountCZK: Math.round(d.grossAmount * rate * 100) / 100,
+          withholdingTaxCZK: Math.round(d.withholdingTax * rate * 100) / 100,
+          netAmountCZK: Math.round(d.netAmount * rate * 100) / 100,
+        };
+      });
+
       set({
         accounts: accs,
         holdings: hlds,
         lots: lts,
         clusters: cls,
         rules: rls,
-        dividends: divs,
+        dividends: recalculatedDivs,
         isLoading: false,
       });
 
@@ -321,9 +332,8 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
     // Save dividends if present
     if (result.dividends && result.dividends.length > 0) {
-      const rates = useCurrencyStore.getState().rates;
       const divs = result.dividends.map(div => {
-        const fxRate = rates[div.currency] || 1.0;
+        const fxRate = CurrencyService.getRate(div.currency, 'CZK');
         return {
           ...div,
           profileId: targetProfileId,
@@ -937,13 +947,13 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
   getHoldingDailyChanges: () => {
     const { holdings } = get();
-    const rates = useCurrencyStore.getState().rates;
-    return CurrencyDecompositionService.calculateHoldingDailyChanges(holdings, rates);
+    const ratesToCZK = CurrencyService.getRatesToCZK();
+    return CurrencyDecompositionService.calculateHoldingDailyChanges(holdings, ratesToCZK);
   },
 
   getCurrencyAttribution: () => {
     const { holdings, lots } = get();
-    const rates = useCurrencyStore.getState().rates;
-    return CurrencyDecompositionService.calculateCurrencyAttribution(holdings, lots, rates);
+    const ratesToCZK = CurrencyService.getRatesToCZK();
+    return CurrencyDecompositionService.calculateCurrencyAttribution(holdings, lots, ratesToCZK);
   },
 }));

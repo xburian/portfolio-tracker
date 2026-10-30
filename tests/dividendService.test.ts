@@ -5,6 +5,7 @@ import { FileSnapshot } from '@/types/broker';
 import { DividendService } from '@/lib/services/dividendService';
 import { DividendTransaction } from '@/types/dividend';
 import { Holding, PositionLot } from '@/types/portfolio';
+import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
 
 describe('Dividend Ingestion & Aggregation Service', () => {
   it('extracts and pairs dividends with withholding tax from real XTB USD statement', async () => {
@@ -264,6 +265,57 @@ describe('Dividend Ingestion & Aggregation Service', () => {
     // Net div = 4080 CZK / Cost native = (1000) -> YoC % is positive and reflects return on capital
     expect(o.yieldOnCost).toBeGreaterThan(0);
     expect(o.lastPaymentDate).toBe('2024-06-15T10:00:00.000Z');
+  });
+
+  it('multi-currency isolation: correctly distinguishes USD, EUR, and CZK dividends within the same CZK account statement', async () => {
+    const filePath = 'sample_data/XTB_CZK_1726393.xlsx';
+    if (!fs.existsSync(filePath)) return;
+
+    const buffer = fs.readFileSync(filePath);
+    const snapshot: FileSnapshot = {
+      fileName: 'XTB_CZK_1726393.xlsx',
+      fileExtension: '.xlsx',
+      sizeBytes: buffer.byteLength,
+      data: new Uint8Array(buffer).buffer,
+    };
+
+    const adapter = new XtbAdapter();
+    const result = await adapter.parse(snapshot);
+
+    expect(result.dividends).toBeDefined();
+
+    // 1. Apple US Stock dividend must be recognized as USD, NOT CZK
+    const aaplDiv = result.dividends!.find(d => d.rawTicker.includes('AAPL'));
+    expect(aaplDiv).toBeDefined();
+    expect(aaplDiv!.currency).toBe('USD');
+    // $1.67 USD at ~23.27 CZK/USD should be ~38.86 CZK, NOT 1.67 CZK!
+    expect(aaplDiv!.fxRateToCZK).toBeGreaterThan(20);
+    expect(aaplDiv!.grossAmountCZK).toBeGreaterThan(30);
+
+    // 2. Komerční Banka Czech dividend must be recognized as CZK
+    const kombDiv = result.dividends!.find(d => d.rawTicker.includes('KOMB') || d.comment?.includes('KOMB'));
+    expect(kombDiv).toBeDefined();
+    expect(kombDiv!.currency).toBe('CZK');
+    expect(kombDiv!.fxRateToCZK).toBe(1.0);
+    expect(kombDiv!.grossAmountCZK).toBe(kombDiv!.grossAmount);
+  });
+
+  it('useCurrencyStore.formatCurrency converts amount from CZK to target currency instead of appending symbol', () => {
+    const { formatCurrency } = useCurrencyStore.getState();
+    const formattedCZK = formatCurrency(25000, 'CZK');
+    expect(formattedCZK).toContain('Kč');
+    expect(formattedCZK).toContain('25');
+
+    const formattedUSD = formatCurrency(25000, 'USD');
+    // 25,000 CZK / ~23.27 = ~$1,074
+    expect(formattedUSD).toContain('$');
+    expect(formattedUSD).not.toContain('25 000');
+    expect(formattedUSD).not.toContain('25,000');
+
+    const formattedEUR = formatCurrency(25000, 'EUR');
+    // 25,000 CZK / 25.25 = ~990 €
+    expect(formattedEUR).toContain('€');
+    expect(formattedEUR).not.toContain('25 000');
   });
 
   it('handles empty dividend lists defensively with zero stats', () => {

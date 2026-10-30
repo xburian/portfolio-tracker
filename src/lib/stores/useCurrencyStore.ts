@@ -31,11 +31,24 @@ export const useCurrencyStore = create<CurrencyState>()(
         const target = to || get().displayCurrency;
         return CurrencyService.convert(amount, from, target);
       },
-      formatCurrency: (amount, currency) => {
-        const cur = currency || get().displayCurrency;
-        const sym = cur === 'CZK' ? 'Kč' : cur === 'EUR' ? '€' : cur === 'USD' ? '$' : cur;
-        const val = Math.round(amount).toLocaleString('cs-CZ');
-        return `${val} ${sym}`;
+      formatCurrency: (amountCZK, targetCurrency) => {
+        const cur = targetCurrency || get().displayCurrency;
+        const converted = CurrencyService.convert(amountCZK, 'CZK', cur);
+        const config: Record<CurrencyCode, { locale: string; currency: string }> = {
+          CZK: { locale: 'cs-CZ', currency: 'CZK' },
+          EUR: { locale: 'de-DE', currency: 'EUR' },
+          USD: { locale: 'en-US', currency: 'USD' },
+          GBP: { locale: 'en-GB', currency: 'GBP' },
+        };
+        const c = config[cur] || config.CZK;
+        const absVal = Math.abs(converted);
+        const digits = absVal < 100 && cur !== 'CZK' ? 2 : 0;
+        return new Intl.NumberFormat(c.locale, {
+          style: 'currency',
+          currency: c.currency,
+          minimumFractionDigits: digits,
+          maximumFractionDigits: digits,
+        }).format(converted);
       },
     }),
     { name: 'fintech-currency-settings' }

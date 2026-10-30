@@ -117,15 +117,15 @@ export const DividendsView: React.FC = () => {
               const heightPct = Math.max(6, Math.round((m.totalNetCZK / maxMonthlyNet) * 100));
               return (
                 <div key={m.yearMonth} className="flex-1 min-w-[42px] max-w-[70px] flex flex-col items-center gap-2 group">
-                  <span className="text-[10px] font-semibold text-slate-400 group-hover:text-emerald-400 transition-colors">
-                    {Math.round(m.totalNetCZK)}
-                  </span>
                   <div className="w-full bg-slate-800/80 rounded-t-lg relative flex items-end overflow-hidden h-44">
                     <div
                       style={{ height: `${heightPct}%` }}
                       className="w-full bg-gradient-to-t from-emerald-600 to-teal-400 rounded-t-lg transition-all duration-300 group-hover:from-emerald-500 group-hover:to-teal-300"
                     />
                   </div>
+                  <span className="text-[10px] font-semibold text-slate-400 group-hover:text-emerald-400 transition-colors">
+                    {formatCurrency(m.totalNetCZK, displayCurrency)}
+                  </span>
                   <span className="text-[10px] text-slate-500 whitespace-nowrap">
                     {m.yearMonth.substring(2)}
                   </span>
@@ -253,9 +253,11 @@ export const DividendsView: React.FC = () => {
                       </td>
                       <td className="py-2.5 px-3 text-right font-bold text-emerald-400 whitespace-nowrap">
                         +{d.netAmount.toFixed(2)} {d.currency}
-                        <span className="text-[10px] text-slate-400 font-normal block">
-                          (~{formatCurrency(d.netAmountCZK, displayCurrency)})
-                        </span>
+                        {d.currency !== displayCurrency && (
+                          <span className="text-[10px] text-slate-400 font-normal block">
+                            (~{formatCurrency(d.netAmountCZK, displayCurrency)})
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

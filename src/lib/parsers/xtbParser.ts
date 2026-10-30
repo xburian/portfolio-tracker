@@ -3,6 +3,7 @@ import { AssetClass, BrokerId, CurrencyCode, CashLedgerTransaction } from '@/typ
 import { FileSnapshot, IBrokerAdapter, IngestionResult } from '@/types/broker';
 import { DividendTransaction } from '@/types/dividend';
 import { MarketPriceService } from '@/lib/services/marketPriceService';
+import { CurrencyService } from '@/lib/services/currencyService';
 
 export class XtbAdapter implements IBrokerAdapter {
   readonly id: BrokerId = 'XTB';
@@ -349,6 +350,8 @@ export class XtbAdapter implements IBrokerAdapter {
         const net = Math.max(0, gross - taxAmount);
         const resolvedTicker = div.ticker || div.comment.split(/\s+/)[0] || 'UNKNOWN';
         const normTicker = MarketPriceService.normalizeTicker(resolvedTicker);
+        const dividendCurrency = inferDividendCurrency(resolvedTicker, div.comment, accountCurrency);
+        const fxToCZK = CurrencyService.getRate(dividendCurrency, 'CZK');
 
         parsedDividends.push({
           id: `div_xtb_${accountNumber}_${div.id}`,
@@ -362,11 +365,11 @@ export class XtbAdapter implements IBrokerAdapter {
           grossAmount: gross,
           withholdingTax: taxAmount,
           netAmount: net,
-          currency: accountCurrency,
-          fxRateToCZK: 1.0, // Calculated during import/rate sync
-          grossAmountCZK: gross,
-          withholdingTaxCZK: taxAmount,
-          netAmountCZK: net,
+          currency: dividendCurrency,
+          fxRateToCZK: fxToCZK,
+          grossAmountCZK: Math.round(gross * fxToCZK * 100) / 100,
+          withholdingTaxCZK: Math.round(taxAmount * fxToCZK * 100) / 100,
+          netAmountCZK: Math.round(net * fxToCZK * 100) / 100,
           comment: div.comment,
         });
       }
@@ -424,5 +427,18 @@ function inferInstrumentCurrency(ticker: string, fallback: CurrencyCode): Curren
     // We default to accountCurrency or USD
     return fallback === 'USD' ? 'USD' : fallback === 'EUR' ? 'EUR' : 'USD';
   }
+  return fallback;
+}
+
+function inferDividendCurrency(ticker: string, comment: string, fallback: CurrencyCode): CurrencyCode {
+  if (comment) {
+    const match = comment.match(/\b(USD|EUR|CZK|GBP)\b/i);
+    if (match) return match[1].toUpperCase() as CurrencyCode;
+  }
+  const t = ticker.toUpperCase().trim();
+  if (t.endsWith('.US')) return 'USD';
+  if (t.endsWith('.CZ') || t.endsWith('.PR')) return 'CZK';
+  if (t.endsWith('.DE') || t.endsWith('.NL') || t.endsWith('.FR') || t.endsWith('.IT') || t.endsWith('.ES') || t.endsWith('.EU')) return 'EUR';
+  if (t.endsWith('.UK') || t.endsWith('.L')) return 'GBP';
   return fallback;
 }
