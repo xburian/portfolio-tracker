@@ -1,5 +1,7 @@
 # 📈 Portfolio Tracker
 
+[![CI](https://github.com/xburian/portfolio-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/xburian/portfolio-tracker/actions/workflows/ci.yml)
+
 Komplexní moderní webová aplikace pro sledování, analýzu, rebalancování a daňovou optimalizaci investičního portfolia napříč více brokery (XTB, Degiro, Interactive Brokers, Portu, bankovní účty a volná hotovost).
 
 ---
