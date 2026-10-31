@@ -17,6 +17,8 @@ export interface StorageStatus {
   connected: boolean;
   details?: string;
   keysCount?: number;
+  entityBreakdown?: Record<string, number>;
+  portfolioKeysCount?: number;
 }
 
 interface AuthState {
@@ -51,7 +53,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await fetch('/api/auth/status');
       if (res.ok) {
         const data = await res.json();
-        set({ storageStatus: data.storage });
+        set({
+          storageStatus: {
+            ...data.storage,
+            entityBreakdown: data.entityBreakdown,
+            portfolioKeysCount: data.portfolioKeysCount,
+          },
+        });
       }
     } catch {
       // ignore

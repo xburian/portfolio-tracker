@@ -51,6 +51,7 @@ export interface Holding {
   totalQuantity: number;
   averageOpenPrice: number;           // Weighted average in instrumentCurrency
   currentPrice: number;               // Live or last known price in instrumentCurrency
+  previousClosePrice?: number;         // Yesterday close for daily delta
   lastPriceUpdate: string;
   
   clusterId?: string;                 // Assigned cluster / group

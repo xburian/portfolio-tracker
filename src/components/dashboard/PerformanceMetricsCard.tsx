@@ -12,13 +12,13 @@ import {
   Wallet,
 } from 'lucide-react';
 import {
-  ResponsiveContainer,
   AreaChart,
   Area,
   XAxis,
   YAxis,
   Tooltip,
 } from 'recharts';
+import { useAutoWidth } from '@/lib/hooks/useAutoWidth';
 import { CurrencyCode, PositionLot, ValuationDetail } from '@/types/portfolio';
 import { PerformanceService, PerformancePeriod } from '@/lib/services/performanceService';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
@@ -34,6 +34,7 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
   const [selectedPeriod, setSelectedPeriod] = useState<PerformancePeriod>('YTD');
   const lots = usePortfolioStore((s) => s.lots);
   const displayCurrency = useCurrencyStore((s) => s.displayCurrency);
+  const { containerRef, width: chartWidth } = useAutoWidth(600);
 
   const performance = useMemo(() => {
     return PerformanceService.calculatePeriodPerformance(
@@ -229,9 +230,8 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
             </span>
           </div>
 
-          <div className="h-[210px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={performance.trajectory} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <div ref={containerRef} className="h-[210px] w-full min-h-[210px] relative overflow-hidden min-w-0">
+            <AreaChart width={chartWidth} height={210} data={performance.trajectory} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="performanceValueGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10B981" stopOpacity={0.4} />
@@ -282,6 +282,7 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
                   fillOpacity={1}
                   fill="url(#performanceValueGrad)"
                   name="Hodnota portfolia"
+                  isAnimationActive={false}
                 />
                 <Area
                   type="monotone"
@@ -292,9 +293,9 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
                   fillOpacity={1}
                   fill="url(#performanceInvestedGrad)"
                   name="Vložený kapitál"
+                  isAnimationActive={false}
                 />
               </AreaChart>
-            </ResponsiveContainer>
           </div>
         </div>
 

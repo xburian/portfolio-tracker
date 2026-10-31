@@ -8,13 +8,18 @@ import { NavigationTabs } from '@/components/layout/NavigationTabs';
 import { MetricDeck } from '@/components/dashboard/MetricDeck';
 import { PerformanceMetricsCard } from '@/components/dashboard/PerformanceMetricsCard';
 import { DonutAllocation } from '@/components/dashboard/DonutAllocation';
+import { DailyChangeDeck } from '@/components/dashboard/DailyChangeDeck';
+import { FIREStatusBar } from '@/components/dashboard/FIREStatusBar';
 import { QuickFilterBar } from '@/components/dashboard/QuickFilterBar';
 import { HoldingsTable } from '@/components/holdings/HoldingsTable';
 import { AllocationBreakdown } from '@/components/breakdown/AllocationBreakdown';
 import { ClusterManagerDrawer } from '@/components/clusters/ClusterManagerDrawer';
 import { ProjectionSimulator } from '@/components/projection/ProjectionSimulator';
+import { BudgetPlanner } from '@/components/budget/BudgetPlanner';
+import { DividendsView } from '@/components/dividends/DividendsView';
 import { ImportModal } from '@/components/import/ImportModal';
 import { CashManagerModal } from '@/components/cash/CashManagerModal';
+import { useBudgetStore } from '@/lib/stores/useBudgetStore';
 import { Upload, Sparkles, PieChart, ShieldCheck, RotateCcw } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -36,6 +41,7 @@ export const App: React.FC = () => {
   const updateRates = useCurrencyStore((s) => s.updateRates);
   const activeTab = usePreferencesStore((s) => s.activeTab);
   const initAuth = useAuthStore((s) => s.initAuth);
+  const initBudget = useBudgetStore((s) => s.initBudget);
 
   const [importOpen, setImportOpen] = useState(false);
   const [cashModalOpen, setCashModalOpen] = useState(false);
@@ -45,7 +51,8 @@ export const App: React.FC = () => {
     initFromDb();
     updateRates();
     initAuth();
-  }, [initFromDb, updateRates, initAuth]);
+    initBudget();
+  }, [initFromDb, updateRates, initAuth, initBudget]);
 
   const valuations = getValuations(displayCurrency);
   const summary = getSummary(displayCurrency);
@@ -125,6 +132,8 @@ export const App: React.FC = () => {
             {activeTab === 'dashboard' && (
               <>
                 <MetricDeck summary={summary} onOpenCashManager={() => setCashModalOpen(true)} />
+                <FIREStatusBar />
+                <DailyChangeDeck />
                 <PerformanceMetricsCard valuations={valuations} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   <div className="lg:col-span-2 xl:col-span-3 flex flex-col gap-4">
@@ -143,6 +152,14 @@ export const App: React.FC = () => {
                 <QuickFilterBar onOpenCashManager={() => setCashModalOpen(true)} />
                 <HoldingsTable valuations={valuations} />
               </div>
+            )}
+
+            {activeTab === 'budget' && (
+              <BudgetPlanner />
+            )}
+
+            {activeTab === 'dividends' && (
+              <DividendsView />
             )}
 
             {activeTab === 'breakdown' && (

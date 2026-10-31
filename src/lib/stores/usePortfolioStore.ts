@@ -7,6 +7,12 @@ import { NlpClusterService } from '@/lib/services/nlpClusterService';
 import { MarketPriceService } from '@/lib/services/marketPriceService';
 import { CurrencyService } from '@/lib/services/currencyService';
 import { StorageCompactionService, CompactionReport } from '@/lib/services/storageCompactionService';
+import { DividendTransaction, MonthlyDividendAggregate, HoldingDividendSummary, AnnualDividendAggregate } from '@/types/dividend';
+import { DividendService } from '@/lib/services/dividendService';
+import { CurrencyDecompositionService } from '@/lib/services/currencyDecompositionService';
+import { HoldingDailyChange, CurrencyAttributionBreakdown } from '@/types/attribution';
+import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
+import { ServerSyncService } from '@/lib/services/serverSyncService';
 
 interface PortfolioState {
   // Profiles
@@ -19,6 +25,7 @@ interface PortfolioState {
   lots: PositionLot[];
   clusters: Cluster[];
   rules: AutoTagRule[];
+  dividends: DividendTransaction[];
   
   selectedAccountFilter: string | null;
   selectedClusterFilter: string | null;
@@ -60,6 +67,14 @@ interface PortfolioState {
   // Computed Selectors
   getValuations: (displayCurrency: CurrencyCode, includeCash?: boolean) => ValuationDetail[];
   getSummary: (displayCurrency: CurrencyCode) => PortfolioSummary;
+  getDividends: () => DividendTransaction[];
+  getDividendsByMonth: () => MonthlyDividendAggregate[];
+  getDividendsByYear: () => AnnualDividendAggregate[];
+  getAvailableDividendYears: () => string[];
+  getDividendsByHolding: () => HoldingDividendSummary[];
+  getDividendSummary: () => { totalNetCZK: number; totalGrossCZK: number; totalTaxCZK: number; avgMonthlyNetCZK: number; effectiveTaxRate: number; count: number };
+  getHoldingDailyChanges: () => HoldingDailyChange[];
+  getCurrencyAttribution: () => CurrencyAttributionBreakdown[];
 }
 
 export const usePortfolioStore = create<PortfolioState>((set, get) => ({
@@ -71,6 +86,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   lots: [],
   clusters: [],
   rules: [],
+  dividends: [],
 
   selectedAccountFilter: null,
   selectedClusterFilter: null,
@@ -83,6 +99,12 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   initFromDb: async () => {
     set({ isLoading: true });
     try {
+      // Check if client DB is empty; if so, attempt pull from backend In-Memory / Redis storage
+      const existingAccountsCount = await db.accounts.count();
+      if (existingAccountsCount === 0) {
+        await ServerSyncService.pullFromBackend().catch(() => {});
+      }
+
       let profiles = await db.profiles.toArray();
       if (profiles.length === 0) {
         const defaultProfile: Profile = {
@@ -117,6 +139,9 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
       set({ profiles, activeProfileId: activeId });
       await get().switchProfile(activeId);
+
+      // Keep backend In-Memory storage synchronized
+      ServerSyncService.pushToBackend().catch(console.warn);
     } catch (e) {
       console.error('Failed to init from DB', e);
       set({ isLoading: false });
@@ -130,12 +155,13 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     }
 
     try {
-      let [accs, hlds, lts, cls, rls] = await Promise.all([
+      let [accs, hlds, lts, cls, rls, divs] = await Promise.all([
         db.accounts.toArray(),
         db.holdings.toArray(),
         db.lots.toArray(),
         db.clusters.toArray(),
         db.rules.toArray(),
+        db.dividends.toArray(),
       ]);
 
       if (profileId !== 'consolidated') {
@@ -144,7 +170,19 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         lts = lts.filter(l => (l.profileId || DEFAULT_PROFILE_ID) === profileId);
         cls = cls.filter(c => (c.profileId || DEFAULT_PROFILE_ID) === profileId || !c.profileId);
         rls = rls.filter(r => (r.profileId || DEFAULT_PROFILE_ID) === profileId || !r.profileId);
+        divs = divs.filter(d => (d.profileId || DEFAULT_PROFILE_ID) === profileId);
       }
+
+      const recalculatedDivs = divs.map(d => {
+        const rate = CurrencyService.getRate(d.currency, 'CZK');
+        return {
+          ...d,
+          fxRateToCZK: rate,
+          grossAmountCZK: Math.round(d.grossAmount * rate * 100) / 100,
+          withholdingTaxCZK: Math.round(d.withholdingTax * rate * 100) / 100,
+          netAmountCZK: Math.round(d.netAmount * rate * 100) / 100,
+        };
+      });
 
       set({
         accounts: accs,
@@ -152,6 +190,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         lots: lts,
         clusters: cls,
         rules: rls,
+        dividends: recalculatedDivs,
         isLoading: false,
       });
 
@@ -177,6 +216,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const profiles = await db.profiles.toArray();
     set({ profiles });
     await get().switchProfile(newProfile.id);
+    ServerSyncService.pushToBackend().catch(console.warn);
     return newProfile.id;
   },
 
@@ -195,6 +235,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const profiles = await db.profiles.toArray();
     set({ profiles });
     await get().switchProfile(DEFAULT_PROFILE_ID);
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   compactDatabase: async () => {
@@ -303,6 +344,23 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       await db.cashLedger.bulkPut(ops);
     }
 
+    // Save dividends if present
+    if (result.dividends && result.dividends.length > 0) {
+      const divs = result.dividends.map(div => {
+        const fxRate = CurrencyService.getRate(div.currency, 'CZK');
+        return {
+          ...div,
+          profileId: targetProfileId,
+          accountId,
+          fxRateToCZK: fxRate,
+          grossAmountCZK: Math.round(div.grossAmount * fxRate * 100) / 100,
+          withholdingTaxCZK: Math.round(div.withholdingTax * fxRate * 100) / 100,
+          netAmountCZK: Math.round(div.netAmount * fxRate * 100) / 100,
+        };
+      });
+      await db.dividends.bulkPut(divs);
+    }
+
     // Run auto-clustering across all holdings
     const allHoldings = await db.holdings.toArray();
     const clusterResult = await NlpClusterService.autoClusterHoldings(allHoldings);
@@ -313,6 +371,9 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
     // Refresh state
     await get().switchProfile(activeProfileId);
+
+    // Push to backend In-Memory / Redis storage
+    ServerSyncService.pushToBackend().catch(console.warn);
 
     return {
       accountName: account.name,
@@ -393,6 +454,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       db.lots.clear(),
       db.cashLedger.clear(),
       db.clusters.clear(),
+      db.dividends.clear(),
     ]);
 
     // 2. Fetch sample statements from backend
@@ -459,6 +521,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
           return {
             ...h,
             currentPrice: q.price,
+            previousClosePrice: q.previousClose || q.price,
             lastPriceUpdate: new Date().toISOString(),
           };
         }
@@ -494,6 +557,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       holdings: holdings.map(h => h.id === holdingId ? updated : h),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   saveAutoRule: async (pattern: string, clusterId: string, clusterName: string) => {
@@ -521,6 +585,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const clusterResult = await NlpClusterService.autoClusterHoldings(allHoldings);
     await db.holdings.bulkPut(clusterResult.updatedHoldings);
     await get().initFromDb();
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   updateHoldingTags: async (holdingId: string, tags: string[]) => {
@@ -533,6 +598,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       holdings: holdings.map(h => h.id === holdingId ? updated : h),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   clearAllData: async () => {
@@ -545,6 +611,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         db.clusters.clear(),
         db.rules.clear(),
         db.cashLedger.clear(),
+        db.dividends.clear(),
       ]);
     } else {
       await Promise.all([
@@ -553,10 +620,12 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         db.lots.where('profileId').equals(activeProfileId).delete(),
         db.clusters.where('profileId').equals(activeProfileId).delete(),
         db.cashLedger.where('profileId').equals(activeProfileId).delete(),
+        db.dividends.where('profileId').equals(activeProfileId).delete(),
       ]);
     }
 
     await get().switchProfile(activeProfileId);
+    ServerSyncService.pushToBackend(true).catch(console.warn);
   },
 
   updateAccountCash: async (accountId: string, cashBalances: Record<CurrencyCode, number>) => {
@@ -574,6 +643,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       accounts: accounts.map(a => a.id === accountId ? updated : a),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   addCashAccount: async (name: string, balances: Record<CurrencyCode, number>, brokerId: BrokerId = 'BANK') => {
@@ -611,6 +681,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       accounts: [...accounts, newAccount],
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
     return accountId;
   },
 
@@ -628,6 +699,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       lots: lots.filter(l => l.accountId !== accountId),
       selectedAccountFilter: get().selectedAccountFilter === accountId ? null : get().selectedAccountFilter,
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   setAccountFilter: (accId) => set({ selectedAccountFilter: accId }),
@@ -879,5 +951,41 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       holdingsCount: allValuations.length,
       accountsCount: relevantAccounts.length,
     };
+  },
+
+  getDividends: () => {
+    return get().dividends;
+  },
+
+  getDividendsByMonth: () => {
+    return DividendService.aggregateByMonth(get().dividends);
+  },
+
+  getDividendsByYear: () => {
+    return DividendService.aggregateByYear(get().dividends);
+  },
+
+  getAvailableDividendYears: () => {
+    return DividendService.getAvailableYears(get().dividends);
+  },
+
+  getDividendsByHolding: () => {
+    return DividendService.aggregateByHolding(get().dividends, get().holdings, get().lots);
+  },
+
+  getDividendSummary: () => {
+    return DividendService.calculateOverallSummary(get().dividends);
+  },
+
+  getHoldingDailyChanges: () => {
+    const { holdings } = get();
+    const ratesToCZK = CurrencyService.getRatesToCZK();
+    return CurrencyDecompositionService.calculateHoldingDailyChanges(holdings, ratesToCZK);
+  },
+
+  getCurrencyAttribution: () => {
+    const { holdings, lots } = get();
+    const ratesToCZK = CurrencyService.getRatesToCZK();
+    return CurrencyDecompositionService.calculateCurrencyAttribution(holdings, lots, ratesToCZK);
   },
 }));

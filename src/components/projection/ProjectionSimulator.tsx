@@ -1,10 +1,13 @@
-import React, { useState, useMemo } from 'react';
-import { Sparkles, TrendingUp, Compass, Flame } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Sparkles, TrendingUp, Compass, Flame, Wallet, RefreshCw, Zap, Landmark, Shield, TrendingDown } from 'lucide-react';
 import { ValuationDetail } from '@/types/portfolio';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 import { FireService } from '@/lib/services/fireService';
+import { useBudgetStore } from '@/lib/stores/useBudgetStore';
 import { ProjectionChart } from './ProjectionChart';
 import { MilestoneList } from './MilestoneList';
+import { FIREHubCard } from './FIREHubCard';
+import { DecumulationSimulator } from './DecumulationSimulator';
 
 interface ProjectionSimulatorProps {
   valuations: ValuationDetail[];
@@ -15,29 +18,77 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
     return valuations.reduce((sum, v) => sum + v.marketValueTarget, 0);
   }, [valuations]);
 
+  const currentCashTotal = useMemo(() => {
+    return valuations
+      .filter((v) => v.holding.assetClass === 'CASH')
+      .reduce((sum, v) => sum + v.marketValueTarget, 0);
+  }, [valuations]);
+
+  const getCashflowSnapshot = useBudgetStore((s) => s.getCashflowSnapshot);
+  const salaryConfig = useBudgetStore((s) => s.salaryConfig);
+  const cashflow = getCashflowSnapshot();
+
+  // Subtab navigation within Projection
+  const [activeSubTab, setActiveSubTab] = useState<'accumulation' | 'fire_hub' | 'decumulation'>('accumulation');
+
   // Sliders state
   const [initialCapital, setInitialCapital] = useState<number>(currentTotal || 100000);
-  const [monthlyDca, setMonthlyDca] = useState<number>(15000);
-  const [annualReturnPct, setAnnualReturnPct] = useState<number>(8.0);
-  const [horizonYears, setHorizonYears] = useState<number>(10);
-  const [desiredMonthlyExpense, setDesiredMonthlyExpense] = useState<number>(50000);
+  const [monthlyDca, setMonthlyDca] = useState<number>(cashflow.netInvestableCapacityCZK > 0 ? cashflow.netInvestableCapacityCZK : 25000);
+  const [annualReturnPct, setAnnualReturnPct] = useState<number>(10.0);
+  const [horizonYears, setHorizonYears] = useState<number>(5);
+  const [desiredMonthlyExpense, setDesiredMonthlyExpense] = useState<number>(
+    cashflow.totalMonthlyExpensesCZK > 0 ? cashflow.totalMonthlyExpensesCZK : 50000
+  );
+
+  // 2-bucket asset split states (Akcie vs Spořící účet)
+  const [stockAllocationPct, setStockAllocationPct] = useState<number>(70); // 70% akcie, 30% spořák
+  const [savingsReturnPct, setSavingsReturnPct] = useState<number>(4.0); // 4% p.a.
+  const [maxSavingsCap, setMaxSavingsCap] = useState<number>(500000); // 500k Kč strop na spořícím účtu (přebytek přetéká do investic), 0 = neomezeno
+
+  // Volatility & Return dispersion (Rozptyl zhodnocení na trajektorii bohatství, výchozí 5 %)
+  const [dispersionPct, setDispersionPct] = useState<number>(5.0);
+
+  // Advanced toggles
+  const [includeCareerEscalator, setIncludeCareerEscalator] = useState<boolean>(true);
+  const [dripReinvestment, setDripReinvestment] = useState<boolean>(true);
 
   // Sync initialCapital with portfolio total when loaded
-  React.useEffect(() => {
+  useEffect(() => {
     if (currentTotal > 0) {
       setInitialCapital(Math.round(currentTotal));
     }
   }, [currentTotal]);
 
+  // Handle macro scenario presets
+  const applyScenario = (cagr: number, name: string) => {
+    setAnnualReturnPct(cagr);
+  };
+
   const projectionData = useMemo(() => {
+    // If career escalator is enabled, compute effective monthly contribution accounting for salary growth
+    let effectiveDca = monthlyDca;
+    if (includeCareerEscalator && salaryConfig.annualIncreasePercentage > 0) {
+      // Average DCA over horizon with salary escalator
+      const growthFactor = Math.pow(1 + salaryConfig.annualIncreasePercentage / 100, horizonYears / 2);
+      effectiveDca = Math.round(monthlyDca * growthFactor);
+    }
+
+    const dividendBonus = dripReinvestment ? 0.017 : 0; // ~1.7% net dividend reinvestment
+
     return FireService.generateProjection(
       initialCapital,
-      monthlyDca,
-      annualReturnPct / 100,
+      effectiveDca,
+      (annualReturnPct / 100) + dividendBonus,
       0.025,
-      horizonYears
+      horizonYears,
+      {
+        stockAllocationPct,
+        savingsNominalReturn: savingsReturnPct / 100,
+        maxSavingsBalanceCZK: maxSavingsCap > 0 ? maxSavingsCap : undefined,
+        annualReturnDispersionPct: dispersionPct > 0 ? dispersionPct : undefined,
+      }
     );
-  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears]);
+  }, [initialCapital, monthlyDca, annualReturnPct, horizonYears, includeCareerEscalator, dripReinvestment, salaryConfig, stockAllocationPct, savingsReturnPct, maxSavingsCap, dispersionPct]);
 
   const milestones = useMemo(() => {
     return FireService.getMilestones(
@@ -62,33 +113,145 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Simulator Control Deck */}
-      <div className="glass-panel p-6 rounded-2xl flex flex-col gap-6">
+      {/* Subtab Navigation Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-2 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('accumulation')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+              activeSubTab === 'accumulation'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <TrendingUp className="w-4 h-4" />
+            <span>Tvorba majetku (Akumulace)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('fire_hub')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+              activeSubTab === 'fire_hub'
+                ? 'bg-rose-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Flame className="w-4 h-4" />
+            <span>FIRE Hub (5 úrovní svobody)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('decumulation')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+              activeSubTab === 'decumulation'
+                ? 'bg-gradient-to-r from-rose-600 to-indigo-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <TrendingDown className="w-4 h-4" />
+            <span>Čerpání renty & Krizový test</span>
+          </button>
+        </div>
+
+        <div className="hidden lg:flex items-center gap-2 text-xs font-mono text-slate-400 pr-2">
+          <span>Celkový majetek:</span>
+          <strong className="text-white"><MoneyDisplay amount={initialCapital} /></strong>
+        </div>
+      </div>
+
+      {activeSubTab === 'fire_hub' && (
+        <FIREHubCard
+          currentPortfolioValue={initialCapital}
+          monthlyDCA={monthlyDca}
+          annualNominalReturn={annualReturnPct / 100}
+          essentialMonthlyExpenses={cashflow.essentialExpensesCZK}
+          totalMonthlyExpenses={cashflow.totalMonthlyExpensesCZK}
+          liquidCashAndSavings={currentCashTotal}
+          projectionData={projectionData}
+        />
+      )}
+
+      {activeSubTab === 'decumulation' && (
+        <DecumulationSimulator
+          initialCapital={initialCapital}
+          initialCashCushion={currentCashTotal > 0 ? currentCashTotal : 500000}
+          monthlyExpense={cashflow.totalMonthlyExpensesCZK > 0 ? cashflow.totalMonthlyExpensesCZK : 50000}
+        />
+      )}
+
+      {activeSubTab === 'accumulation' && (
+        <>
+          {/* Simulator Control Deck */}
+          <div className="glass-panel p-6 rounded-2xl flex flex-col gap-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h3 className="text-base font-semibold text-slate-100 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-indigo-400" />
-              <span>Simulátor budoucího majetku & FIRE</span>
+              <span>Vícehorizontový simulátor bohatství & FIRE</span>
             </h3>
             <p className="text-xs text-slate-400">
-              Odhad hodnoty portfolia za 5 až 30 let s měsíčním vkladem (DCA) a složeným úročením
+              Propojení čisté mzdy, kariérního růstu, měsíčních úspor a složeného úročení akcií
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            {[5, 10, 15, 20, 25, 30].map((yr) => (
+          {/* Horizon selector buttons */}
+          <div className="flex items-center gap-1 sm:gap-2 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+            {[1, 3, 5, 10, 20, 30].map((yr) => (
               <button
                 key={yr}
                 onClick={() => setHorizonYears(yr)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition-colors ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition-all ${
                   horizonYears === yr
-                    ? 'bg-indigo-600 text-white font-semibold'
-                    : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                    ? 'bg-indigo-600 text-white font-semibold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {yr} let
+                {yr} {yr === 1 ? 'rok' : yr < 5 ? 'roky' : 'let'}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Macro Scenarios Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-xs">
+          <div className="flex items-center gap-2 text-slate-400">
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>Rychlé makro scénáře:</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => applyScenario(6.0, 'Konzervativní')}
+              className={`px-3 py-1 rounded-lg border text-xs font-medium transition-all ${
+                annualReturnPct === 6.0
+                  ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold'
+                  : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              Konzervativní (6 % p.a.)
+            </button>
+            <button
+              onClick={() => applyScenario(10.0, 'Realistický')}
+              className={`px-3 py-1 rounded-lg border text-xs font-medium transition-all ${
+                annualReturnPct === 10.0
+                  ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300 font-semibold'
+                  : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              Realistický trh (10 % p.a.)
+            </button>
+            <button
+              onClick={() => applyScenario(14.0, 'Optimistický')}
+              className={`px-3 py-1 rounded-lg border text-xs font-medium transition-all ${
+                annualReturnPct === 14.0
+                  ? 'bg-amber-600/30 border-amber-500 text-amber-300 font-semibold'
+                  : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              Optimistický (14 % p.a.)
+            </button>
           </div>
         </div>
 
@@ -97,51 +260,62 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
           {/* 1. Očekávaný roční výnos (CAGR) */}
           <div className="flex flex-col gap-2">
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Očekávaný roční výnos (CAGR):</span>
+              <span className="text-slate-400">Výnos akcií (CAGR):</span>
               <span className="font-mono font-bold text-indigo-400 text-sm">{annualReturnPct.toFixed(1)}% p.a.</span>
             </div>
             <input
               type="range"
               min="1.0"
-              max="15.0"
+              max="18.0"
               step="0.5"
               value={annualReturnPct}
               onChange={(e) => setAnnualReturnPct(parseFloat(e.target.value))}
               className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
             />
             <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-              <span>Konzervativní (5%)</span>
-              <span>S&P 500 / Trh (8–10%)</span>
-              <span>Optimistický (12%+)</span>
+              <span>Dluhopisy (3%)</span>
+              <span>S&P 500 (10%)</span>
+              <span>Růstové akcie (15%+)</span>
             </div>
           </div>
 
-          {/* 2. Měsíční vklad (DCA) */}
+          {/* 2. Měsíční vklad (DCA) s napojením na rozpočet */}
           <div className="flex flex-col gap-2">
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Pravidelný měsíční vklad (DCA):</span>
+              <div className="flex items-center gap-1.5 text-slate-400">
+                <span>Měsíční vklad (DCA):</span>
+                {cashflow.netInvestableCapacityCZK > 0 && (
+                  <button
+                    onClick={() => setMonthlyDca(cashflow.netInvestableCapacityCZK)}
+                    title="Nastavit podle volné investiční kapacity z rozpočtu"
+                    className="p-0.5 rounded text-indigo-400 hover:text-indigo-300"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
               <MoneyDisplay amount={monthlyDca} className="font-mono font-bold text-emerald-400 text-sm" />
             </div>
             <input
               type="range"
               min="0"
-              max="50000"
-              step="1000"
+              max="100000"
+              step="2000"
               value={monthlyDca}
               onChange={(e) => setMonthlyDca(parseInt(e.target.value, 10))}
               className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
             />
             <div className="flex justify-between text-[10px] text-slate-500 font-mono">
               <span>0 Kč</span>
-              <span>15 000 Kč</span>
-              <span>50 000 Kč/měs</span>
+              <span className="text-emerald-400/80 font-medium">Z rozpočtu: {Math.round(cashflow.netInvestableCapacityCZK / 1000)}k</span>
+              <span>100 000 Kč/měs</span>
             </div>
           </div>
 
           {/* 3. Počáteční kapitál */}
           <div className="flex flex-col gap-2">
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Počáteční hodnota portfolia:</span>
+              <span className="text-slate-400">Současná hodnota majetku:</span>
               <MoneyDisplay amount={initialCapital} className="font-mono font-bold text-slate-200 text-sm" />
             </div>
             <input
@@ -150,6 +324,224 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
               onChange={(e) => setInitialCapital(Math.max(0, parseInt(e.target.value, 10) || 0))}
               className="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono font-semibold text-slate-200 text-right focus:outline-none focus:border-indigo-500"
             />
+            <div className="flex justify-end">
+              <button
+                onClick={() => setInitialCapital(Math.round(currentTotal))}
+                className="text-[10px] text-slate-500 hover:text-indigo-400 transition-colors"
+              >
+                Resetovat na tržní hodnotu ({Math.round(currentTotal).toLocaleString()} Kč)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Rozdělení úspor: Investice (Akcie & ETF) vs. Spořící účet (Spořák) */}
+        <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Landmark className="w-4 h-4 text-sky-400" />
+              <span className="text-xs font-semibold text-slate-200">
+                Rozdělení úspor: Investice do akcií vs. Spořící účet (s nižším úrokem)
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                {stockAllocationPct}% Akcie
+              </span>
+              <span className="text-slate-600 font-bold">/</span>
+              <span className="px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/20 font-semibold">
+                {100 - stockAllocationPct}% Spořák
+              </span>
+            </div>
+          </div>
+
+          {/* Allocation Slider */}
+          <div className="flex flex-col gap-1.5">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={stockAllocationPct}
+              onChange={(e) => setStockAllocationPct(parseInt(e.target.value, 10))}
+              className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+            />
+            <div className="flex justify-between items-center text-[11px] font-mono">
+              <div className="text-emerald-400 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span>Akcie & ETF ({stockAllocationPct}%):</span>
+                <strong>{Math.round(monthlyDca * (stockAllocationPct / 100)).toLocaleString()} Kč/měs</strong>
+              </div>
+              <div className="text-sky-400 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-sky-400" />
+                <span>Spořící účet ({100 - stockAllocationPct}%):</span>
+                <strong>{Math.round(monthlyDca * ((100 - stockAllocationPct) / 100)).toLocaleString()} Kč/měs</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Savings account interest slider */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2 border-t border-slate-800/60 text-xs">
+            <div className="flex items-center gap-2 text-slate-400">
+              <span>Úrok na spořícím účtu:</span>
+              <span className="font-mono font-bold text-sky-400 text-sm">{savingsReturnPct.toFixed(1)}% p.a.</span>
+              <span className="text-[10px] text-slate-500 font-mono">(čistý úrok po 15% srážkové dani v ČR: {(savingsReturnPct * 0.85).toFixed(2)}% p.a.)</span>
+            </div>
+            <div className="w-full sm:w-64">
+              <input
+                type="range"
+                min="0.5"
+                max="8.0"
+                step="0.5"
+                value={savingsReturnPct}
+                onChange={(e) => setSavingsReturnPct(parseFloat(e.target.value))}
+                className="w-full accent-sky-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              />
+            </div>
+          </div>
+
+          {/* Emergency Fund Cap (Cílový strop na spořáku & Automatický přeliv do investic) */}
+          <div className="flex flex-col gap-2 pt-2.5 border-t border-slate-800/60 text-xs">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+              <div className="space-y-0.5">
+                <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Cílový strop na spořícím účtu (Emergency polštář & automatický přeliv do akcií):</span>
+                </span>
+                <p className="text-[11px] text-slate-400">
+                  Jakmile naspoříte tuto rezervu (např. 500 000 Kč), další úspory i připsané úroky automaticky přetékají do investic v akciích.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  step="50000"
+                  value={maxSavingsCap}
+                  onChange={(e) => setMaxSavingsCap(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  className="w-32 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono font-bold text-amber-300 text-right focus:outline-none focus:border-amber-500"
+                />
+                <span className="text-slate-500 font-mono text-[11px]">Kč</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[10px] text-slate-500">Rychlé volby:</span>
+              {[200_000, 300_000, 500_000, 1_000_000].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setMaxSavingsCap(preset)}
+                  className={`px-2.5 py-0.5 rounded-md text-[10px] font-mono transition-all ${
+                    maxSavingsCap === preset
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                      : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800'
+                  }`}
+                >
+                  {(preset / 1000).toLocaleString()} tis. Kč
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setMaxSavingsCap(0)}
+                className={`px-2.5 py-0.5 rounded-md text-[10px] font-mono transition-all ${
+                  maxSavingsCap === 0
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                    : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800'
+                }`}
+              >
+                Bez limitu
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Kariérní růst & DRIP volby */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 text-xs">
+          <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800/60 cursor-pointer hover:border-slate-700 transition-all">
+            <input
+              type="checkbox"
+              checked={includeCareerEscalator}
+              onChange={(e) => setIncludeCareerEscalator(e.target.checked)}
+              className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-0"
+            />
+            <div>
+              <span className="font-semibold text-slate-200 block">Kariérní eskalátor (+{salaryConfig.annualIncreasePercentage}% mzdy ročně)</span>
+              <span className="text-[11px] text-slate-400">Automaticky navyšuje měsíční vklad s každým rokem zaměstnání</span>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800/60 cursor-pointer hover:border-slate-700 transition-all">
+            <input
+              type="checkbox"
+              checked={dripReinvestment}
+              onChange={(e) => setDripReinvestment(e.target.checked)}
+              className="rounded border-slate-700 bg-slate-950 text-emerald-600 focus:ring-0"
+            />
+            <div>
+              <span className="font-semibold text-slate-200 block">Reinvestování dividend (DRIP +1.7 % p.a.)</span>
+              <span className="text-[11px] text-slate-400">Vyplacené dividendy se automaticky přikupují zpět do portfolia</span>
+            </div>
+          </label>
+        </div>
+
+        {/* 5. Rozptyl zhodnocení na trajektorii bohatství (Volatilita & pásmo nejistoty) */}
+        <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              <span className="text-xs font-semibold text-slate-200">
+                Pásmo rozptylu na trajektorii bohatství (Volatilita zhodnocení akcií):
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <span className="px-2.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 font-bold">
+                {dispersionPct > 0 ? `±${dispersionPct.toFixed(1)} % p.a.` : 'Bez rozptylu (0 %)'}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-400">
+            Zobrazuje koridor očekávaného vývoje portfolia mezi pesimistickým scénářem ({Math.max(0, annualReturnPct - dispersionPct).toFixed(1)} % p.a.) a optimistickým scénářem ({(annualReturnPct + dispersionPct).toFixed(1)} % p.a.) pro rizikovou složku (akcie & ETF).
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-1">
+            <div className="w-full sm:flex-1 flex flex-col gap-1">
+              <input
+                type="range"
+                min="0"
+                max="15.0"
+                step="0.5"
+                value={dispersionPct}
+                onChange={(e) => setDispersionPct(parseFloat(e.target.value))}
+                className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+              />
+              <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                <span>0 % (pouze průměr)</span>
+                <span>±3 % (mírná)</span>
+                <span className="text-indigo-400 font-bold">±5 % (výchozí)</span>
+                <span>±8 % (střední)</span>
+                <span>±12 % (vysoká)</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[0, 3, 5, 8, 10, 12].map((pct) => (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => setDispersionPct(pct)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-all ${
+                    dispersionPct === pct
+                      ? 'bg-indigo-600 text-white font-bold shadow-md'
+                      : 'bg-slate-800/70 text-slate-400 hover:text-slate-200 border border-slate-700/60'
+                  }`}
+                >
+                  {pct === 0 ? 'Vypnuto' : `±${pct} %${pct === 5 ? ' (Výchozí)' : ''}`}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -165,76 +557,109 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
 
         {/* Projection KPI summary row */}
         {finalPoint && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-slate-800/80">
-            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <span className="text-[11px] text-slate-400 font-mono">Odhad za {horizonYears} let</span>
-              <MoneyDisplay amount={finalPoint.nominalValue} className="text-xl sm:text-2xl font-bold text-emerald-400 block mt-1" />
-              <div className="text-[10px] text-slate-500 font-mono mt-1">
-                Po inflaci: <MoneyDisplay amount={finalPoint.realValue} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-800/80">
+            {/* 1. Celkový odhad majetku */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80">
+              <span className="text-[11px] text-slate-400 font-mono">
+                Celkový majetek za {horizonYears} {horizonYears === 1 ? 'rok' : horizonYears < 5 ? 'roky' : 'let'}
+              </span>
+              <MoneyDisplay amount={finalPoint.nominalValue} className="text-xl sm:text-2xl font-bold text-white block mt-1" />
+              <div className="text-[10px] text-slate-400 font-mono mt-1">
+                Kupní síla (po inflaci): <MoneyDisplay amount={finalPoint.realValue} className="text-slate-300 font-semibold" />
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <span className="text-[11px] text-slate-400 font-mono">Vlastní vklad vs. Složený zisk</span>
+            {/* 2. Investice (Akcie & ETF) */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-emerald-500/30">
+              <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span>Akcie & ETF ({stockAllocationPct}%)</span>
+                </span>
+                <span className="text-slate-400">
+                  {((finalPoint.stocksValue / (finalPoint.nominalValue || 1)) * 100).toFixed(0)} % majetku
+                </span>
+              </div>
+              <MoneyDisplay amount={finalPoint.stocksValue} className="text-xl sm:text-2xl font-bold text-emerald-400 block" />
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-800">
+                <span>Vklad: <MoneyDisplay amount={finalPoint.stocksPrincipalInvested} /></span>
+                <span className="text-emerald-300 font-semibold">Zisk: +<MoneyDisplay amount={finalPoint.stocksCompoundGain} /></span>
+              </div>
+            </div>
+
+            {/* 3. Spořící účet (Spořák) */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-sky-500/30 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between text-[11px] font-mono mb-1">
+                  <span className="text-sky-400 font-semibold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-sky-400" />
+                    <span>Spořící účet ({100 - stockAllocationPct}%)</span>
+                  </span>
+                  {maxSavingsCap > 0 && finalPoint.savingsValue >= maxSavingsCap ? (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-semibold border border-amber-500/30">
+                      Strop {Math.round(maxSavingsCap / 1000)}k dosažen
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">
+                      {((finalPoint.savingsValue / (finalPoint.nominalValue || 1)) * 100).toFixed(0)} % majetku
+                    </span>
+                  )}
+                </div>
+                <MoneyDisplay amount={finalPoint.savingsValue} className="text-xl sm:text-2xl font-bold text-sky-400 block" />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-800">
+                  <span>Vklad: <MoneyDisplay amount={finalPoint.savingsPrincipalInvested} /></span>
+                  <span className="text-sky-300 font-semibold">Úrok: +<MoneyDisplay amount={finalPoint.savingsInterestGain} /></span>
+                </div>
+                {finalPoint.savingsSpilloverToStocks !== undefined && finalPoint.savingsSpilloverToStocks > 0 && (
+                  <div className="flex items-center justify-between text-[10px] text-amber-300 font-mono mt-1 pt-1 border-t border-slate-800/60">
+                    <span className="flex items-center gap-1">
+                      <TrendingUp className="w-3 h-3 text-amber-400" />
+                      <span>Přelito do akcií:</span>
+                    </span>
+                    <strong className="text-emerald-300">+<MoneyDisplay amount={finalPoint.savingsSpilloverToStocks} /></strong>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 4. Celkové zhodnocení kapitálu */}
+            <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80">
+              <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                <span>Vložený kapitál celkem</span>
+                <span className="text-indigo-400 font-semibold">
+                  {finalPoint.principalInvested > 0
+                    ? `${(finalPoint.nominalValue / finalPoint.principalInvested).toFixed(2)}x`
+                    : '1.0x'}
+                </span>
+              </div>
               <div className="flex items-baseline justify-between mt-1">
-                <span className="text-xs text-indigo-300">Vklad:</span>
+                <span className="text-xs text-slate-400">Vklady:</span>
                 <MoneyDisplay amount={finalPoint.principalInvested} className="font-mono font-semibold text-slate-300 text-sm" />
               </div>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-xs text-emerald-400">Zisk:</span>
+              <div className="flex items-baseline justify-between mt-0.5 pt-1 border-t border-slate-800">
+                <span className="text-xs text-emerald-400">Zisk celkem:</span>
                 <MoneyDisplay amount={finalPoint.compoundInterestGain} className="font-mono font-bold text-emerald-400 text-sm" />
               </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60">
-              <span className="text-[11px] text-slate-400 font-mono">Zhodnocení vkladu</span>
-              <div className="text-xl sm:text-2xl font-bold text-slate-100 font-mono mt-1">
-                {finalPoint.principalInvested > 0
-                  ? `${(finalPoint.nominalValue / finalPoint.principalInvested).toFixed(2)}x`
-                  : '1.0x'}
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">
-                Násobek vložených peněz
-              </span>
             </div>
           </div>
         )}
       </div>
 
-      {/* FIRE (Financial Independence) Box */}
-      <div className="glass-panel p-6 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-        <div className="flex items-start gap-3 max-w-xl">
-          <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">
-            <Flame className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="text-sm font-semibold text-slate-100">Kalkulačka finanční svobody (FIRE)</h4>
-            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Pravidlo 4 % bezpečného výběru (Trinity Study). Díky českému 3letému časovému testu jsou akumulační ETF osvobozena od daně z příjmu.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4 shrink-0">
-          <div>
-            <span className="text-[10px] font-mono text-slate-400 block">Požadovaná měsíční renta:</span>
-            <input
-              type="number"
-              value={desiredMonthlyExpense}
-              onChange={(e) => setDesiredMonthlyExpense(parseInt(e.target.value, 10) || 0)}
-              className="w-36 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono font-bold text-slate-100 text-right focus:outline-none focus:border-rose-500"
-            />
-          </div>
-
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-right font-mono">
-            <span className="text-[10px] text-slate-400 block">Cílové portfolio:</span>
-            <MoneyDisplay amount={fireResult.firePortfolioTarget} className="text-sm font-bold text-rose-400" />
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              Za {fireResult.yearsToFIRE} let ({fireResult.fireDate})
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+        {/* FIRE Command Center Hub directly integrated */}
+        <FIREHubCard
+          currentPortfolioValue={initialCapital}
+          monthlyDCA={monthlyDca}
+          annualNominalReturn={annualReturnPct / 100}
+          essentialMonthlyExpenses={cashflow.essentialExpensesCZK}
+          totalMonthlyExpenses={cashflow.totalMonthlyExpensesCZK}
+          liquidCashAndSavings={currentCashTotal}
+          projectionData={projectionData}
+        />
+      </>
+    )}
+  </div>
   );
 };

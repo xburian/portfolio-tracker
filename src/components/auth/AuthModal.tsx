@@ -14,8 +14,10 @@ import {
   LogOut,
   RefreshCw,
   Sparkles,
+  UploadCloud,
 } from 'lucide-react';
 import { useAuthStore } from '@/lib/stores/useAuthStore';
+import { ServerSyncService } from '@/lib/services/serverSyncService';
 
 interface AuthModalProps {
   open: boolean;
@@ -28,6 +30,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({ open, onOpenChange }) => {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [isSyncingStorage, setIsSyncingStorage] = useState(false);
+
+  const handleManualSync = async () => {
+    setIsSyncingStorage(true);
+    try {
+      const res = await ServerSyncService.pushToBackend(true);
+      await fetchStorageStatus();
+      if (res) {
+        setActionSuccess('Všechna data portfolia byla úspěšně uložena do In-Memory databáze!');
+        setTimeout(() => setActionSuccess(null), 4000);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsSyncingStorage(false);
+    }
+  };
 
   const user = useAuthStore((s) => s.user);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -207,7 +226,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({ open, onOpenChange }) => {
                     {storageStatus?.type === 'redis' ? 'Produkční Redis' : 'Lokální In-Memory'}
                   </span>
                 </div>
+                {storageStatus?.keysCount !== undefined && (
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800/60">
+                    <span className="text-slate-400">Záznamů v DB úložišti:</span>
+                    <span className="font-mono text-indigo-300 font-semibold">{storageStatus.keysCount} klíčů</span>
+                  </div>
+                )}
+                {storageStatus?.entityBreakdown && (
+                  <div className="grid grid-cols-2 gap-1.5 pt-2 text-[10px] text-slate-400 font-mono">
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Akcie & Pozice: <span className="text-emerald-400">{storageStatus.entityBreakdown.holdings || 0}</span>
+                    </div>
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Účty: <span className="text-emerald-400">{storageStatus.entityBreakdown.accounts || 0}</span>
+                    </div>
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Dividendy: <span className="text-emerald-400">{storageStatus.entityBreakdown.dividends || 0}</span>
+                    </div>
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Výdaje & Mzda: <span className="text-emerald-400">{(storageStatus.entityBreakdown.salaryConfigs || 0) + (storageStatus.entityBreakdown.expenseCategories || 0)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* Immediate sync button */}
+              <button
+                type="button"
+                disabled={isSyncingStorage}
+                onClick={handleManualSync}
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-all disabled:opacity-50"
+              >
+                <UploadCloud className={`w-3.5 h-3.5 ${isSyncingStorage ? 'animate-bounce' : ''}`} />
+                <span>{isSyncingStorage ? 'Ukládám do In-Memory DB...' : 'Uložit portfolio do In-Memory DB'}</span>
+              </button>
 
               {/* Logout Button */}
               <button
@@ -361,10 +413,37 @@ export const AuthModal: React.FC<AuthModalProps> = ({ open, onOpenChange }) => {
                 </p>
                 {storageStatus?.keysCount !== undefined && (
                   <div className="text-[10px] text-slate-400 font-mono">
-                    Aktivní záznamy v úložišti: {storageStatus.keysCount}
+                    Aktivní záznamy v úložišti: {storageStatus.keysCount} klíčů
+                  </div>
+                )}
+                {storageStatus?.entityBreakdown && (
+                  <div className="grid grid-cols-2 gap-1.5 pt-2 text-[10px] text-slate-400 font-mono">
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Akcie & Pozice: <span className="text-emerald-400">{storageStatus.entityBreakdown.holdings || 0}</span>
+                    </div>
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Účty: <span className="text-emerald-400">{storageStatus.entityBreakdown.accounts || 0}</span>
+                    </div>
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Dividendy: <span className="text-emerald-400">{storageStatus.entityBreakdown.dividends || 0}</span>
+                    </div>
+                    <div className="bg-slate-950/60 px-2 py-1 rounded border border-slate-800/50">
+                      Výdaje & Mzda: <span className="text-emerald-400">{(storageStatus.entityBreakdown.salaryConfigs || 0) + (storageStatus.entityBreakdown.expenseCategories || 0)}</span>
+                    </div>
                   </div>
                 )}
               </div>
+
+              {/* Immediate sync button */}
+              <button
+                type="button"
+                disabled={isSyncingStorage}
+                onClick={handleManualSync}
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-all disabled:opacity-50"
+              >
+                <UploadCloud className={`w-3.5 h-3.5 ${isSyncingStorage ? 'animate-bounce' : ''}`} />
+                <span>{isSyncingStorage ? 'Ukládám do In-Memory DB...' : 'Uložit portfolio do In-Memory DB'}</span>
+              </button>
 
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex flex-col gap-2">
                 <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1.5">
