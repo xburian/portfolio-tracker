@@ -5,6 +5,7 @@ import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
 import { ExpenseCategory, SalaryBonusConfig } from '@/types/budget';
 import { WalletCards, Plus, Trash2, Edit2, Check, TrendingUp, Calendar, AlertCircle, ArrowRight, Shield, Sparkles } from 'lucide-react';
 import { SalaryTrajectoryChart } from './SalaryTrajectoryChart';
+import { DIPCalculatorCard } from './DIPCalculatorCard';
 
 export const BudgetPlanner: React.FC = () => {
   const salaryConfig = useBudgetStore((s) => s.salaryConfig);
@@ -472,6 +473,9 @@ export const BudgetPlanner: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 2.5. DIP (Dlouhodobý investiční produkt) & Daňový akcelerátor */}
+      <DIPCalculatorCard />
 
       {/* 3. Spojnice rozpočtu s trajektorií predikce bohatství */}
       <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900/90 via-indigo-950/30 to-slate-900/90 border border-indigo-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">

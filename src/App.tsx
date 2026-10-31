@@ -9,6 +9,7 @@ import { MetricDeck } from '@/components/dashboard/MetricDeck';
 import { PerformanceMetricsCard } from '@/components/dashboard/PerformanceMetricsCard';
 import { DonutAllocation } from '@/components/dashboard/DonutAllocation';
 import { DailyChangeDeck } from '@/components/dashboard/DailyChangeDeck';
+import { FIREStatusBar } from '@/components/dashboard/FIREStatusBar';
 import { QuickFilterBar } from '@/components/dashboard/QuickFilterBar';
 import { HoldingsTable } from '@/components/holdings/HoldingsTable';
 import { AllocationBreakdown } from '@/components/breakdown/AllocationBreakdown';
@@ -131,6 +132,7 @@ export const App: React.FC = () => {
             {activeTab === 'dashboard' && (
               <>
                 <MetricDeck summary={summary} onOpenCashManager={() => setCashModalOpen(true)} />
+                <FIREStatusBar />
                 <DailyChangeDeck />
                 <PerformanceMetricsCard valuations={valuations} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6">
