@@ -3,39 +3,21 @@ import { Flame, ShieldCheck, TrendingUp, Sparkles, ArrowRight, Clock, Coffee } f
 import { usePortfolioStore } from '@/lib/stores/usePortfolioStore';
 import { useBudgetStore } from '@/lib/stores/useBudgetStore';
 import { usePreferencesStore } from '@/lib/stores/usePreferencesStore';
+import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
 import { FireService } from '@/lib/services/fireService';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 
 export const FIREStatusBar: React.FC = () => {
-  const holdings = usePortfolioStore((s) => s.holdings);
-  const accounts = usePortfolioStore((s) => s.accounts);
+  const getSummary = usePortfolioStore((s) => s.getSummary);
+  const displayCurrency = useCurrencyStore((s) => s.displayCurrency);
   const getCashflowSnapshot = useBudgetStore((s) => s.getCashflowSnapshot);
   const setActiveTab = usePreferencesStore((s) => s.setActiveTab);
 
+  const summary = getSummary(displayCurrency);
   const cashflow = getCashflowSnapshot();
 
-  const totalPortfolioValue = useMemo(() => {
-    let total = 0;
-    for (const h of holdings) {
-      total += (h.currentPrice || h.buyPrice || 0) * (h.totalQuantity || 0);
-    }
-    for (const a of accounts) {
-      for (const amt of Object.values(a.cashBalances || {})) {
-        total += amt || 0;
-      }
-    }
-    return total;
-  }, [holdings, accounts]);
-
-  const totalCash = useMemo(() => {
-    let cash = 0;
-    for (const a of accounts) {
-      for (const amt of Object.values(a.cashBalances || {})) {
-        cash += amt || 0;
-      }
-    }
-    return cash;
-  }, [accounts]);
+  const totalPortfolioValue = summary.totalNav;
+  const totalCash = summary.totalCashValue;
 
   const essentialExp = cashflow.essentialExpensesCZK > 0 ? cashflow.essentialExpensesCZK : 30000;
   const totalExp = cashflow.totalMonthlyExpensesCZK > 0 ? cashflow.totalMonthlyExpensesCZK : 50000;
