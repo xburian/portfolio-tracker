@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Sparkles, TrendingUp, Compass, Flame, Wallet, RefreshCw, Zap, Landmark, Shield } from 'lucide-react';
+import { Sparkles, TrendingUp, Compass, Flame, Wallet, RefreshCw, Zap, Landmark, Shield, TrendingDown } from 'lucide-react';
 import { ValuationDetail } from '@/types/portfolio';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 import { FireService } from '@/lib/services/fireService';
 import { useBudgetStore } from '@/lib/stores/useBudgetStore';
 import { ProjectionChart } from './ProjectionChart';
 import { MilestoneList } from './MilestoneList';
+import { FIREHubCard } from './FIREHubCard';
+import { DecumulationSimulator } from './DecumulationSimulator';
 
 interface ProjectionSimulatorProps {
   valuations: ValuationDetail[];
@@ -16,16 +18,27 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
     return valuations.reduce((sum, v) => sum + v.marketValueTarget, 0);
   }, [valuations]);
 
+  const currentCashTotal = useMemo(() => {
+    return valuations
+      .filter((v) => v.holding.assetClass === 'CASH')
+      .reduce((sum, v) => sum + v.marketValueTarget, 0);
+  }, [valuations]);
+
   const getCashflowSnapshot = useBudgetStore((s) => s.getCashflowSnapshot);
   const salaryConfig = useBudgetStore((s) => s.salaryConfig);
   const cashflow = getCashflowSnapshot();
+
+  // Subtab navigation within Projection
+  const [activeSubTab, setActiveSubTab] = useState<'accumulation' | 'fire_hub' | 'decumulation'>('accumulation');
 
   // Sliders state
   const [initialCapital, setInitialCapital] = useState<number>(currentTotal || 100000);
   const [monthlyDca, setMonthlyDca] = useState<number>(cashflow.netInvestableCapacityCZK > 0 ? cashflow.netInvestableCapacityCZK : 25000);
   const [annualReturnPct, setAnnualReturnPct] = useState<number>(10.0);
   const [horizonYears, setHorizonYears] = useState<number>(5);
-  const [desiredMonthlyExpense, setDesiredMonthlyExpense] = useState<number>(50000);
+  const [desiredMonthlyExpense, setDesiredMonthlyExpense] = useState<number>(
+    cashflow.totalMonthlyExpensesCZK > 0 ? cashflow.totalMonthlyExpensesCZK : 50000
+  );
 
   // 2-bucket asset split states (Akcie vs Spořící účet)
   const [stockAllocationPct, setStockAllocationPct] = useState<number>(70); // 70% akcie, 30% spořák
@@ -100,8 +113,79 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Simulator Control Deck */}
-      <div className="glass-panel p-6 rounded-2xl flex flex-col gap-6">
+      {/* Subtab Navigation Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-2 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('accumulation')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+              activeSubTab === 'accumulation'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <TrendingUp className="w-4 h-4" />
+            <span>Tvorba majetku (Akumulace)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('fire_hub')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+              activeSubTab === 'fire_hub'
+                ? 'bg-rose-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Flame className="w-4 h-4" />
+            <span>FIRE Hub (5 úrovní svobody)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('decumulation')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+              activeSubTab === 'decumulation'
+                ? 'bg-gradient-to-r from-rose-600 to-indigo-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <TrendingDown className="w-4 h-4" />
+            <span>Čerpání renty & Krizový test</span>
+          </button>
+        </div>
+
+        <div className="hidden lg:flex items-center gap-2 text-xs font-mono text-slate-400 pr-2">
+          <span>Celkový majetek:</span>
+          <strong className="text-white"><MoneyDisplay amount={initialCapital} /></strong>
+        </div>
+      </div>
+
+      {activeSubTab === 'fire_hub' && (
+        <FIREHubCard
+          currentPortfolioValue={initialCapital}
+          monthlyDCA={monthlyDca}
+          annualNominalReturn={annualReturnPct / 100}
+          essentialMonthlyExpenses={cashflow.essentialExpensesCZK}
+          totalMonthlyExpenses={cashflow.totalMonthlyExpensesCZK}
+          liquidCashAndSavings={currentCashTotal}
+          projectionData={projectionData}
+        />
+      )}
+
+      {activeSubTab === 'decumulation' && (
+        <DecumulationSimulator
+          initialCapital={initialCapital}
+          initialCashCushion={currentCashTotal > 0 ? currentCashTotal : 500000}
+          monthlyExpense={cashflow.totalMonthlyExpensesCZK > 0 ? cashflow.totalMonthlyExpensesCZK : 50000}
+        />
+      )}
+
+      {activeSubTab === 'accumulation' && (
+        <>
+          {/* Simulator Control Deck */}
+          <div className="glass-panel p-6 rounded-2xl flex flex-col gap-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h3 className="text-base font-semibold text-slate-100 flex items-center gap-2">
@@ -564,40 +648,18 @@ export const ProjectionSimulator: React.FC<ProjectionSimulatorProps> = ({ valuat
         )}
       </div>
 
-      {/* FIRE (Financial Independence) Box */}
-      <div className="glass-panel p-6 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-        <div className="flex items-start gap-3 max-w-xl">
-          <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">
-            <Flame className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="text-sm font-semibold text-slate-100">Kalkulačka finanční svobody (FIRE)</h4>
-            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Pravidlo 4 % bezpečného výběru (Trinity Study). Díky českému 3letému časovému testu jsou akumulační ETF osvobozena od daně z příjmu.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4 shrink-0">
-          <div>
-            <span className="text-[10px] font-mono text-slate-400 block">Požadovaná měsíční renta:</span>
-            <input
-              type="number"
-              value={desiredMonthlyExpense}
-              onChange={(e) => setDesiredMonthlyExpense(parseInt(e.target.value, 10) || 0)}
-              className="w-36 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono font-bold text-slate-100 text-right focus:outline-none focus:border-rose-500"
-            />
-          </div>
-
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-right font-mono">
-            <span className="text-[10px] text-slate-400 block">Cílové portfolio:</span>
-            <MoneyDisplay amount={fireResult.firePortfolioTarget} className="text-sm font-bold text-rose-400" />
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              Za {fireResult.yearsToFIRE} let ({fireResult.fireDate})
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+        {/* FIRE Command Center Hub directly integrated */}
+        <FIREHubCard
+          currentPortfolioValue={initialCapital}
+          monthlyDCA={monthlyDca}
+          annualNominalReturn={annualReturnPct / 100}
+          essentialMonthlyExpenses={cashflow.essentialExpensesCZK}
+          totalMonthlyExpenses={cashflow.totalMonthlyExpensesCZK}
+          liquidCashAndSavings={currentCashTotal}
+          projectionData={projectionData}
+        />
+      </>
+    )}
+  </div>
   );
 };

@@ -195,4 +195,134 @@ describe('FIRE & Milestone Simulator', () => {
     expect(pointsNoDispersion[0].varianceUpperValue).toBeUndefined();
     expect(pointsNoDispersion[0].varianceLowerValue).toBeUndefined();
   });
+
+  describe('Comprehensive Multi-Tier FIRE Engine (Lean, Standard, Fat, Barista, Coast, Runway)', () => {
+    it('calculates Lean, Standard, Fat, and Barista FIRE targets accurately', () => {
+      const res = FireService.calculateComprehensiveFIRE({
+        currentPortfolioValue: 2_000_000,
+        monthlyDCA: 30_000,
+        annualNominalReturn: 0.08,
+        swrAnnualRatePct: 3.5, // 3.5% modern SWR
+        essentialMonthlyExpenses: 30_000,
+        totalMonthlyExpenses: 50_000,
+        baristaPartTimeIncome: 20_000,
+        fatBufferPct: 35,
+      });
+
+      // 1. Lean FIRE (30k/mo -> 360k/yr -> 360k / 0.035 = 10,285,714)
+      expect(res.tiers.lean.monthlyExpenseCZK).toBe(30_000);
+      expect(res.tiers.lean.targetPortfolioCZK).toBe(Math.round((30_000 * 12) / 0.035));
+      expect(res.tiers.lean.progressPercentage).toBeGreaterThan(0);
+
+      // 2. Standard FIRE (50k/mo -> 600k/yr -> 600k / 0.035 = 17,142,857)
+      expect(res.tiers.standard.monthlyExpenseCZK).toBe(50_000);
+      expect(res.tiers.standard.targetPortfolioCZK).toBe(Math.round((50_000 * 12) / 0.035));
+      expect(res.tiers.standard.yearsToFIRE).toBeGreaterThan(res.tiers.lean.yearsToFIRE);
+
+      // 3. Fat FIRE (50k * 1.35 = 67.5k/mo -> 810k/yr -> 810k / 0.035 = 23,142,857)
+      expect(res.tiers.fat.monthlyExpenseCZK).toBe(67_500);
+      expect(res.tiers.fat.targetPortfolioCZK).toBe(Math.round((67_500 * 12) / 0.035));
+      expect(res.tiers.fat.yearsToFIRE).toBeGreaterThan(res.tiers.standard.yearsToFIRE);
+
+      // 4. Barista FIRE (50k - 20k = 30k/mo net withdrawal needed)
+      expect(res.tiers.barista.monthlyExpenseCZK).toBe(30_000);
+      expect(res.tiers.barista.targetPortfolioCZK).toBe(res.tiers.lean.targetPortfolioCZK);
+    });
+
+    it('calculates Coast FIRE capital requirement and coasting threshold', () => {
+      const targetRetirement = 15_000_000;
+      const currentAge = 30;
+      const retirementAge = 60; // 30 years horizon
+      const realReturn = 5.0; // 5% real p.a.
+
+      const coast = FireService.calculateCoastFIRE(
+        4_000_000,
+        targetRetirement,
+        realReturn,
+        currentAge,
+        retirementAge
+      );
+
+      // (1 + 0.05)^30 = 4.32194
+      // Required = 15,000,000 / 4.32194 = ~3,470,662 CZK
+      expect(coast.yearsToRetirement).toBe(30);
+      expect(coast.requiredCapitalTodayCZK).toBeLessThan(4_000_000);
+      expect(coast.isCoastingAchieved).toBe(true);
+      expect(coast.surplusOrShortfallCZK).toBeGreaterThan(0);
+
+      // Verify non-coasting scenario
+      const notCoasting = FireService.calculateCoastFIRE(
+        1_000_000,
+        targetRetirement,
+        realReturn,
+        currentAge,
+        retirementAge
+      );
+      expect(notCoasting.isCoastingAchieved).toBe(false);
+      expect(notCoasting.surplusOrShortfallCZK).toBeLessThan(0);
+    });
+
+    it('calculates Liquid Runway months and status thresholds', () => {
+      // 1. Critical (< 3 months)
+      const critical = FireService.calculateLiquidRunway(50_000, 20_000, 30_000);
+      expect(critical.totalRunwayMonths).toBe(1.7);
+      expect(critical.runwayStatus).toBe('critical');
+
+      // 2. Healthy (3 - 12 months)
+      const healthy = FireService.calculateLiquidRunway(200_000, 20_000, 30_000);
+      expect(healthy.totalRunwayMonths).toBe(6.7);
+      expect(healthy.essentialRunwayMonths).toBe(10.0);
+      expect(healthy.runwayStatus).toBe('healthy');
+
+      // 3. Exceptional (> 12 months)
+      const exceptional = FireService.calculateLiquidRunway(500_000, 20_000, 30_000);
+      expect(exceptional.totalRunwayMonths).toBe(16.7);
+      expect(exceptional.runwayStatus).toBe('exceptional');
+    });
+
+    it('detects Crossover Point where passive returns exceed monthly expenses', () => {
+      const projection = FireService.generateProjection(5_000_000, 20_000, 0.10, 0.025, 5);
+      const crossover = FireService.calculateCrossoverPoint(projection, 40_000, 0.10);
+
+      expect(crossover.hasReached).toBe(true);
+      expect(crossover.crossoverMonth).toBeDefined();
+      expect(crossover.monthlyPassiveGainCZK).toBeGreaterThanOrEqual(40_000);
+    });
+
+    it('simulates Decumulation retirement phase with inflation and stress test protection', () => {
+      // Normal decumulation: 10M CZK, 40k/mo withdrawal, 7% return, 2.5% inflation over 30 years
+      const normalPoints = FireService.simulateDecumulation({
+        initialPortfolioCZK: 10_000_000,
+        initialCashCushionCZK: 500_000,
+        monthlyWithdrawalCZK: 40_000,
+        annualInflationPct: 2.5,
+        annualNominalReturnPct: 7.0,
+        horizonYears: 30,
+        stressTestEnabled: false,
+      });
+
+      expect(normalPoints.length).toBeGreaterThan(1);
+      const lastNormal = normalPoints[normalPoints.length - 1];
+      expect(lastNormal.isBankrupt).toBe(false);
+      expect(lastNormal.totalWealthCZK).toBeGreaterThan(0);
+      expect(lastNormal.cumulativeWithdrawnCZK).toBeGreaterThan(14_000_000);
+
+      // Stress test: Sequence of Returns crash in Year 1 (-25%) and Year 2 (-15%)
+      const stressPoints = FireService.simulateDecumulation({
+        initialPortfolioCZK: 5_000_000,
+        initialCashCushionCZK: 1_000_000, // 1M cash cushion
+        monthlyWithdrawalCZK: 40_000,
+        annualInflationPct: 2.5,
+        annualNominalReturnPct: 7.0,
+        horizonYears: 20,
+        stressTestEnabled: true,
+      });
+
+      expect(stressPoints.length).toBeGreaterThan(1);
+      // In year 1 and 2, cash cushion was used to defend equities
+      const y1 = stressPoints.find(p => p.year === 1);
+      expect(y1).toBeDefined();
+      expect(y1!.cashCushionCZK).toBeLessThan(1_000_000);
+    });
+  });
 });

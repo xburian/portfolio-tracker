@@ -92,3 +92,91 @@ export interface SalaryProjectionYearPoint {
   cumulativeNetEarnedCZK: number;        // Celkový kumulovaný čistý výdělek odteď
   realPurchasingPowerMonthlyCZK: number; // Měsíční čistá mzda očistěná o inflaci (reálná kupní síla)
 }
+
+export type FIRECategory = 'lean' | 'standard' | 'fat' | 'barista' | 'coast';
+
+export interface FIRETierDetail {
+  category: FIRECategory;
+  name: string;
+  description: string;
+  monthlyExpenseCZK: number;
+  annualExpenseCZK: number;
+  targetPortfolioCZK: number;
+  monthsToFIRE: number;
+  yearsToFIRE: number;
+  fireDate: string;
+  reachable: boolean;
+  progressPercentage: number;
+  monthlyPassiveIncomeCZK: number;
+}
+
+export interface CoastFIREResult {
+  currentAge: number;
+  targetRetirementAge: number;
+  yearsToRetirement: number;
+  targetPortfolioAtRetirementCZK: number;
+  requiredCapitalTodayCZK: number;
+  currentInvestedCapitalCZK: number;
+  isCoastingAchieved: boolean;
+  surplusOrShortfallCZK: number;
+  expectedAnnualRealReturnPct: number;
+}
+
+export interface CrossoverPointResult {
+  hasReached: boolean;
+  crossoverMonth?: number;
+  crossoverYear?: number;
+  crossoverDate?: string;
+  portfolioValueAtCrossoverCZK?: number;
+  monthlyPassiveGainCZK?: number;
+  monthlyExpensesCZK?: number;
+}
+
+export interface LiquidRunwayResult {
+  liquidCashAndSavingsCZK: number;
+  essentialMonthlyExpensesCZK: number;
+  totalMonthlyExpensesCZK: number;
+  essentialRunwayMonths: number;
+  totalRunwayMonths: number;
+  runwayStatus: 'critical' | 'healthy' | 'exceptional'; // <3 měs, 3-12 měs, >12 měs
+}
+
+export interface ComprehensiveFIREResult {
+  currentPortfolioValueCZK: number;
+  monthlyDCA: number;
+  annualNominalReturnPct: number;
+  swrAnnualRatePct: number; // e.g. 3.5%
+  isTaxExemptAccumulating: boolean;
+  tiers: {
+    lean: FIRETierDetail;
+    standard: FIRETierDetail;
+    fat: FIRETierDetail;
+    barista: FIRETierDetail;
+  };
+  coastFIRE: CoastFIREResult;
+  crossoverPoint: CrossoverPointResult;
+  liquidRunway: LiquidRunwayResult;
+}
+
+export interface DecumulationConfig {
+  initialPortfolioCZK: number;
+  initialCashCushionCZK: number;
+  monthlyWithdrawalCZK: number;
+  annualInflationPct: number; // e.g. 2.5%
+  annualNominalReturnPct: number; // e.g. 7.0%
+  horizonYears: number; // 20, 30, 40, 50
+  stressTestEnabled?: boolean; // simulates early market crash (-25% year 1, -15% year 2)
+}
+
+export interface DecumulationPoint {
+  year: number;
+  month: number;
+  dateLabel: string;
+  portfolioValueCZK: number;
+  cashCushionCZK: number;
+  totalWealthCZK: number;
+  monthlyGrossWithdrawalCZK: number;
+  cumulativeWithdrawnCZK: number;
+  isBankrupt: boolean;
+  realPurchasingPowerWealthCZK: number;
+}
