@@ -7,7 +7,11 @@ import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
 import { FireService } from '@/lib/services/fireService';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 
-export const FIREStatusBar: React.FC = () => {
+interface FIREStatusBarProps {
+  onOpenRebalancer?: () => void;
+}
+
+export const FIREStatusBar: React.FC<FIREStatusBarProps> = ({ onOpenRebalancer }) => {
   const getSummary = usePortfolioStore((s) => s.getSummary);
   const displayCurrency = useCurrencyStore((s) => s.displayCurrency);
   const getCashflowSnapshot = useBudgetStore((s) => s.getCashflowSnapshot);
@@ -83,6 +87,18 @@ export const FIREStatusBar: React.FC = () => {
           <span className="text-slate-400">Plný FIRE:</span>
           <strong className="text-rose-400">{fire.tiers.standard.yearsToFIRE} let ({fire.tiers.standard.fireDate})</strong>
         </div>
+
+        {/* Smart DCA Rebalancer button */}
+        {onOpenRebalancer && (
+          <button
+            onClick={onOpenRebalancer}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/25 hover:bg-indigo-600/35 text-indigo-300 border border-indigo-500/40 text-xs font-bold transition-all hover:scale-105 active:scale-95 shadow-sm"
+            title="Dorovnání vah z nového vkladu bez daní a bez prodeje aktiv"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Smart DCA vklad</span>
+          </button>
+        )}
 
         {/* 1-click jump button to FIRE Hub */}
         <button

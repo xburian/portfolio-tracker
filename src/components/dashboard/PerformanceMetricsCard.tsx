@@ -13,6 +13,7 @@ import {
   Briefcase,
   Waves,
   Receipt,
+  Scale,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -32,12 +33,13 @@ import { MonthlyReturnsMatrix } from './MonthlyReturnsMatrix';
 import { ClosedPositionsView } from './ClosedPositionsView';
 import { DrawdownTrackerView } from './DrawdownTrackerView';
 import { FeeAuditView } from './FeeAuditView';
+import { CzechTaxAssistantView } from '@/components/tax/CzechTaxAssistantView';
 
 interface PerformanceMetricsCardProps {
   valuations: ValuationDetail[];
 }
 
-type PerformanceSubTab = 'TIMELINE' | 'MONTHLY_MATRIX' | 'CLOSED_POSITIONS' | 'DRAWDOWN' | 'FEES';
+type PerformanceSubTab = 'TIMELINE' | 'MONTHLY_MATRIX' | 'CLOSED_POSITIONS' | 'TAX_ASSISTANT' | 'DRAWDOWN' | 'FEES';
 
 export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ valuations }) => {
   const [activeTab, setActiveTab] = useState<PerformanceSubTab>('TIMELINE');
@@ -150,6 +152,18 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
         </button>
 
         <button
+          onClick={() => setActiveTab('TAX_ASSISTANT')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
+            activeTab === 'TAX_ASSISTANT'
+              ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Scale className="w-3.5 h-3.5" />
+          <span>Daňový asistent (§ 10 & § 8)</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('DRAWDOWN')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
             activeTab === 'DRAWDOWN'
@@ -181,6 +195,10 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
 
       {activeTab === 'CLOSED_POSITIONS' && (
         <ClosedPositionsView />
+      )}
+
+      {activeTab === 'TAX_ASSISTANT' && (
+        <CzechTaxAssistantView />
       )}
 
       {activeTab === 'DRAWDOWN' && (

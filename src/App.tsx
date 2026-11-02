@@ -19,6 +19,7 @@ import { BudgetPlanner } from '@/components/budget/BudgetPlanner';
 import { DividendsView } from '@/components/dividends/DividendsView';
 import { ImportModal } from '@/components/import/ImportModal';
 import { CashManagerModal } from '@/components/cash/CashManagerModal';
+import { SmartDCARebalancerModal } from '@/components/rebalance/SmartDCARebalancerModal';
 import { useBudgetStore } from '@/lib/stores/useBudgetStore';
 import { Upload, Sparkles, PieChart, ShieldCheck, RotateCcw } from 'lucide-react';
 
@@ -45,6 +46,7 @@ export const App: React.FC = () => {
 
   const [importOpen, setImportOpen] = useState(false);
   const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [rebalancerOpen, setRebalancerOpen] = useState(false);
   const [isDemoLoading, setIsDemoLoading] = useState(false);
 
   useEffect(() => {
@@ -132,7 +134,7 @@ export const App: React.FC = () => {
             {activeTab === 'dashboard' && (
               <>
                 <MetricDeck summary={summary} onOpenCashManager={() => setCashModalOpen(true)} />
-                <FIREStatusBar />
+                <FIREStatusBar onOpenRebalancer={() => setRebalancerOpen(true)} />
                 <DailyChangeDeck />
                 <PerformanceMetricsCard valuations={valuations} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -179,6 +181,11 @@ export const App: React.FC = () => {
 
       <ImportModal open={importOpen} onOpenChange={setImportOpen} />
       <CashManagerModal open={cashModalOpen} onOpenChange={setCashModalOpen} />
+      <SmartDCARebalancerModal
+        open={rebalancerOpen}
+        onOpenChange={setRebalancerOpen}
+        valuations={valuations}
+      />
     </div>
   );
 };
