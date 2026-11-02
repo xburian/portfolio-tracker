@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { DcaRebalanceService } from '../src/lib/services/dcaRebalanceService';
-import { ValuationDetail } from '../src/types/portfolio';
+import { AssetClass, BrokerId, CurrencyCode, ValuationDetail } from '../src/types/portfolio';
 import { TargetAllocationItem } from '../src/types/rebalance';
 
 function createMockValuation(
@@ -8,36 +8,45 @@ function createMockValuation(
   ticker: string,
   name: string,
   valueCZK: number,
-  brokerId: 'XTB' | 'DEGIRO' | 'IBKR' | 'PORTU' = 'XTB',
-  currency: 'CZK' | 'USD' | 'EUR' = 'CZK',
+  brokerId: BrokerId = 'XTB',
+  currency: CurrencyCode = 'CZK',
   priceNative = 100,
-  assetClass: 'EQUITY' | 'ETF' | 'CRYPTO' | 'COMMODITY' | 'CASH' = 'ETF'
+  assetClass: AssetClass = 'ETF'
 ): ValuationDetail {
+  const qty = valueCZK / priceNative;
   return {
     holding: {
       id,
-      portfolioId: 'p-1',
+      accountId: 'acc-1',
       brokerId,
       name,
       rawTicker: ticker,
       normalizedTicker: ticker,
       assetClass,
-      quantity: valueCZK / priceNative,
-      currency,
-      costBasisTarget: valueCZK * 0.9,
+      instrumentCurrency: currency,
+      totalQuantity: qty,
+      averageOpenPrice: priceNative * 0.9,
       currentPrice: priceNative,
-      openDateUtc: '2023-01-01T00:00:00Z',
-      createdAtUtc: '2023-01-01T00:00:00Z',
+      lastPriceUpdate: '2023-01-01T00:00:00Z',
       clusterId: ticker,
+      tags: [],
     },
-    currentPriceNative: priceNative,
+    quantity: qty,
     instrumentCurrency: currency,
-    rateToTargetCurrency: 1,
-    marketValueTarget: valueCZK,
-    unrealizedGainTarget: valueCZK * 0.1,
-    unrealizedGainPercent: 11.1,
-    weightPercent: 0,
+    currentPriceNative: priceNative,
+    costBasisNative: valueCZK * 0.9,
+    marketValueNative: valueCZK,
+    unrealizedProfitNative: valueCZK * 0.1,
+    unrealizedProfitPercent: 11.1,
+    targetCurrency: 'CZK',
+    exchangeRateNativeToTarget: 1,
+    currentPriceTarget: priceNative,
     costBasisTarget: valueCZK * 0.9,
+    marketValueTarget: valueCZK,
+    unrealizedProfitTarget: valueCZK * 0.1,
+    pureAssetGainTarget: valueCZK * 0.1,
+    fxGainTarget: 0,
+    weightInPortfolio: 0,
   };
 }
 
