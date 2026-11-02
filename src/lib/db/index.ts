@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import { Profile, Account, Holding, PositionLot, Cluster, AutoTagRule, CashLedgerTransaction } from '@/types/portfolio';
+import { Profile, Account, Holding, PositionLot, Cluster, AutoTagRule, CashLedgerTransaction, ClosedPosition } from '@/types/portfolio';
 import { DividendTransaction } from '@/types/dividend';
 import { SalaryConfig, ExpenseCategory } from '@/types/budget';
 
@@ -23,6 +23,7 @@ export const db = new Dexie('PortfolioTrackerDB') as Dexie & {
   dividends: EntityTable<DividendTransaction, 'id'>;
   salaryConfigs: EntityTable<SalaryConfig, 'profileId'>;
   expenseCategories: EntityTable<ExpenseCategory, 'id'>;
+  closedPositions: EntityTable<ClosedPosition, 'id'>;
 };
 
 // Dexie Version 1 (Initial schema)
@@ -115,4 +116,20 @@ db.version(3).stores({
       await expenseTable.add(exp);
     }
   }
+});
+
+// Dexie Version 4: Realized Closed Positions & Performance Tracker
+db.version(4).stores({
+  profiles: 'id, isDefault, createdAt',
+  accounts: 'id, profileId, brokerId, accountNumber',
+  holdings: 'id, profileId, accountId, normalizedTicker, clusterId, assetClass',
+  lots: 'id, profileId, accountId, holdingId, ticketId',
+  clusters: 'id, profileId, name',
+  rules: 'id, profileId, pattern, assignedClusterId',
+  cashLedger: 'id, profileId, accountId, type, timeUtc',
+  exchangeRates: 'pair, timestamp',
+  dividends: 'id, profileId, accountId, normalizedTicker, isin, paymentDateUtc, yearMonth, [profileId+yearMonth], [profileId+normalizedTicker]',
+  salaryConfigs: 'profileId, paydayDayOfMonth, updatedAt',
+  expenseCategories: 'id, profileId, name, isEssential',
+  closedPositions: 'id, profileId, accountId, normalizedTicker, closeDateUtc, isTimeTestExempt, [profileId+closeDateUtc]',
 });

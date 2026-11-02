@@ -10,6 +10,9 @@ import {
   Info,
   ChevronRight,
   Wallet,
+  Briefcase,
+  Waves,
+  Receipt,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -25,16 +28,26 @@ import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 import { DeltaBadge } from '@/components/common/DeltaBadge';
 import { usePortfolioStore } from '@/lib/stores/usePortfolioStore';
 import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
+import { MonthlyReturnsMatrix } from './MonthlyReturnsMatrix';
+import { ClosedPositionsView } from './ClosedPositionsView';
+import { DrawdownTrackerView } from './DrawdownTrackerView';
+import { FeeAuditView } from './FeeAuditView';
 
 interface PerformanceMetricsCardProps {
   valuations: ValuationDetail[];
 }
 
+type PerformanceSubTab = 'TIMELINE' | 'MONTHLY_MATRIX' | 'CLOSED_POSITIONS' | 'DRAWDOWN' | 'FEES';
+
 export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ valuations }) => {
+  const [activeTab, setActiveTab] = useState<PerformanceSubTab>('TIMELINE');
   const [selectedPeriod, setSelectedPeriod] = useState<PerformancePeriod>('YTD');
   const lots = usePortfolioStore((s) => s.lots);
+  const closedPositions = usePortfolioStore((s) => s.closedPositions);
   const displayCurrency = useCurrencyStore((s) => s.displayCurrency);
   const { containerRef, width: chartWidth } = useAutoWidth(600);
+
+  const closedPositionsCount = closedPositions.length;
 
   const performance = useMemo(() => {
     return PerformanceService.calculatePeriodPerformance(
@@ -57,7 +70,7 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
 
   return (
     <div className="bg-[#0F1420] border border-slate-800/90 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
-      {/* Top Header & Period Switcher */}
+      {/* Top Header & Sub-Tab Switcher */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800/80">
         <div>
           <div className="flex items-center gap-2">
@@ -65,33 +78,122 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
               <TrendingUp className="w-4 h-4" />
             </div>
             <h3 className="text-base font-bold text-slate-100 tracking-tight">
-              Výkonnost portfolia & Benchmarky
+              Výkonnost & Analytika portfolia
             </h3>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Zhodnocení v čase podle standardu GIPS (Modified Dietz) se zohledněním průběžných vkladů
+            GIPS Modified Dietz zhodnocení, měsíční heatmapa, uzavřené obchody (§ 4 ZDP), drawdown a audit poplatků
           </p>
         </div>
 
-        {/* Period Selector Tabs */}
-        <div className="flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-medium overflow-x-auto">
-          {periods.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setSelectedPeriod(p.id)}
-              className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-all ${
-                selectedPeriod === p.id
-                  ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span>{p.label}</span>
-            </button>
-          ))}
-        </div>
+        {/* Period Selector Tabs (Only active in TIMELINE tab) */}
+        {activeTab === 'TIMELINE' && (
+          <div className="flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-medium overflow-x-auto">
+            {periods.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setSelectedPeriod(p.id)}
+                className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-all ${
+                  selectedPeriod === p.id
+                    ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>{p.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Main Stats 3-Column Deck */}
+      {/* Segmented Sub-Tab Switcher */}
+      <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900/90 border border-slate-800 text-xs overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('TIMELINE')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
+            activeTab === 'TIMELINE'
+              ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <TrendingUp className="w-3.5 h-3.5" />
+          <span>Časová křivka & Benchmarky</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('MONTHLY_MATRIX')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
+            activeTab === 'MONTHLY_MATRIX'
+              ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Calendar className="w-3.5 h-3.5" />
+          <span>Měsíční heatmapa</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('CLOSED_POSITIONS')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
+            activeTab === 'CLOSED_POSITIONS'
+              ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Briefcase className="w-3.5 h-3.5" />
+          <span>Uzavřené pozice & Daň (§ 4)</span>
+          {closedPositionsCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+              {closedPositionsCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('DRAWDOWN')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
+            activeTab === 'DRAWDOWN'
+              ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Waves className="w-3.5 h-3.5" />
+          <span>Drawdown & ATH</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('FEES')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium whitespace-nowrap transition-all ${
+            activeTab === 'FEES'
+              ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Receipt className="w-3.5 h-3.5" />
+          <span>Audit poplatků</span>
+        </button>
+      </div>
+
+      {/* Render Active View */}
+      {activeTab === 'MONTHLY_MATRIX' && (
+        <MonthlyReturnsMatrix valuations={valuations} />
+      )}
+
+      {activeTab === 'CLOSED_POSITIONS' && (
+        <ClosedPositionsView />
+      )}
+
+      {activeTab === 'DRAWDOWN' && (
+        <DrawdownTrackerView valuations={valuations} />
+      )}
+
+      {activeTab === 'FEES' && (
+        <FeeAuditView />
+      )}
+
+      {activeTab === 'TIMELINE' && (
+        <>
+          {/* Main Stats 3-Column Deck */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* 1. Čistý vytvořený zisk za období */}
         <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-col justify-between">
@@ -353,6 +455,8 @@ export const PerformanceMetricsCard: React.FC<PerformanceMetricsCardProps> = ({ 
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };

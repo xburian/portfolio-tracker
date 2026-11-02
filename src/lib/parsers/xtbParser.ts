@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { AssetClass, BrokerId, CurrencyCode, CashLedgerTransaction } from '@/types/portfolio';
+import { AssetClass, BrokerId, CurrencyCode, CashLedgerTransaction, ClosedPosition } from '@/types/portfolio';
 import { FileSnapshot, IBrokerAdapter, IngestionResult } from '@/types/broker';
 import { DividendTransaction } from '@/types/dividend';
 import { MarketPriceService } from '@/lib/services/marketPriceService';
@@ -375,6 +375,126 @@ export class XtbAdapter implements IBrokerAdapter {
       }
     }
 
+    // Step 5: Parse Closed Positions sheet (if present)
+    const closedPositions: ClosedPosition[] = [];
+    const closedSheetName = wb.SheetNames.find(s => s.toLowerCase().includes('closed position'));
+    if (closedSheetName) {
+      const closedSheet = wb.Sheets[closedSheetName];
+      const closedRows: any[][] = XLSX.utils.sheet_to_json(closedSheet, {
+        header: 1,
+        raw: false,
+        dateNF: 'yyyy-mm-dd hh:mm:ss',
+      });
+
+      // Find header row in Closed Positions sheet
+      let closedHeaderIdx = -1;
+      for (let r = 0; r < Math.min(25, closedRows.length); r++) {
+        const row = (closedRows[r] || []).map(c => String(c ?? '').trim().toLowerCase());
+        if (row.includes('ticker') && (row.includes('close price') || row.includes('profit/loss') || row.includes('position id'))) {
+          closedHeaderIdx = r;
+          break;
+        }
+      }
+
+      if (closedHeaderIdx >= 0) {
+        const cHeaders = (closedRows[closedHeaderIdx] || []).map(c => String(c ?? '').trim().toLowerCase());
+        const cCol = {
+          instrument: cHeaders.findIndex(h => h.includes('instrument') || h.includes('product')),
+          ticker: cHeaders.indexOf('ticker'),
+          category: cHeaders.indexOf('category'),
+          type: cHeaders.indexOf('type'),
+          volume: cHeaders.indexOf('volume'),
+          openPrice: cHeaders.findIndex(h => h.includes('open price')),
+          openTime: cHeaders.findIndex(h => h.includes('open time')),
+          closePrice: cHeaders.findIndex(h => h.includes('close price')),
+          closeTime: cHeaders.findIndex(h => h.includes('close time')),
+          profit: cHeaders.findIndex(h => h.includes('profit/loss') || h.includes('profit')),
+          purchaseValue: cHeaders.findIndex(h => h.includes('purchase value')),
+          saleValue: cHeaders.findIndex(h => h.includes('sale value')),
+          commission: cHeaders.indexOf('commission'),
+          positionId: cHeaders.findIndex(h => h.includes('position id') || h.includes('position')),
+          comment: cHeaders.indexOf('comment'),
+        };
+
+        for (let r = closedHeaderIdx + 1; r < closedRows.length; r++) {
+          const row = closedRows[r] || [];
+          const rawTicker = String(row[cCol.ticker] ?? '').trim();
+          if (!rawTicker) continue;
+
+          const rawInstrument = String(row[cCol.instrument] ?? rawTicker).trim();
+          const rawCategory = String(row[cCol.category] ?? 'STOCK').trim();
+          const volume = parseNumber(row[cCol.volume]);
+          const openPrice = parseNumber(row[cCol.openPrice]);
+          const closePrice = parseNumber(row[cCol.closePrice]);
+          const openTime = parseDate(row[cCol.openTime]);
+          const closeTime = parseDate(row[cCol.closeTime]);
+          const profitNative = parseNumber(row[cCol.profit]);
+          const purchaseValNative = parseNumber(row[cCol.purchaseValue]) || (volume * openPrice);
+          const saleValNative = parseNumber(row[cCol.saleValue]) || (volume * closePrice);
+          const commissionNative = parseNumber(row[cCol.commission]);
+          const positionId = String(row[cCol.positionId] ?? `close-${r}`).trim();
+          const comment = String(row[cCol.comment] ?? '').trim();
+
+          const instCurrency = inferInstrumentCurrency(rawTicker, accountCurrency);
+          const assetClass = mapCategory(rawCategory);
+          const normalizedTicker = MarketPriceService.normalizeTicker(rawTicker);
+
+          // Calculate holding period in days
+          const openMs = new Date(openTime).getTime();
+          const closeMs = new Date(closeTime).getTime();
+          const holdingPeriodDays = Math.max(0, Math.round((closeMs - openMs) / (24 * 3600 * 1000)));
+
+          // Czech 3-Year Time Test exemption (§ 4 odst. 1 písm. w) ZDP)
+          // 3 years = 1096 days (including leap year)
+          const isTimeTestExempt = holdingPeriodDays >= 1096;
+
+          // Conversion to CZK (target currency)
+          const fxRateToCZK = CurrencyService.getRate(instCurrency, 'CZK');
+          const purchaseTarget = purchaseValNative * fxRateToCZK;
+          const saleTarget = saleValNative * fxRateToCZK;
+          const profitTarget = profitNative * fxRateToCZK;
+          const commissionTarget = commissionNative * fxRateToCZK;
+
+          // Profit percentage
+          const profitPercent = purchaseValNative > 0
+            ? Math.round((profitNative / purchaseValNative) * 10000) / 100
+            : 0;
+
+          // Estimated 15% tax saved if exempt
+          const estimatedTaxSaved = isTimeTestExempt && profitTarget > 0 ? profitTarget * 0.15 : 0;
+
+          closedPositions.push({
+            id: `xtb-${accountNumber}-close-${positionId}`,
+            accountId: `xtb-${accountNumber}`,
+            brokerId: 'XTB',
+            rawTicker,
+            normalizedTicker,
+            name: rawInstrument,
+            assetClass,
+            instrumentCurrency: instCurrency,
+            volume,
+            openPrice,
+            openDateUtc: openTime,
+            closePrice,
+            closeDateUtc: closeTime,
+            holdingPeriodDays,
+            purchaseValueNative: purchaseValNative,
+            saleValueNative: saleValNative,
+            profitNative,
+            profitPercent,
+            commissionNative,
+            purchaseValueTarget: Math.round(purchaseTarget * 100) / 100,
+            saleValueTarget: Math.round(saleTarget * 100) / 100,
+            profitTarget: Math.round(profitTarget * 100) / 100,
+            commissionTarget: Math.round(commissionTarget * 100) / 100,
+            isTimeTestExempt,
+            estimatedTaxSavedTarget: Math.round(estimatedTaxSaved * 100) / 100,
+            comment,
+          });
+        }
+      }
+    }
+
     return {
       account: {
         brokerId: 'XTB',
@@ -387,6 +507,7 @@ export class XtbAdapter implements IBrokerAdapter {
       lots: finalLots,
       cashOperations: cashOps,
       dividends: parsedDividends,
+      closedPositions,
       warnings,
     };
   }
