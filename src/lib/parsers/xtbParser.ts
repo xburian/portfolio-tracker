@@ -1,6 +1,9 @@
 import * as XLSX from 'xlsx';
-import { AssetClass, BrokerId, CurrencyCode, CashLedgerTransaction } from '@/types/portfolio';
+import { AssetClass, BrokerId, CurrencyCode, CashLedgerTransaction, ClosedPosition } from '@/types/portfolio';
 import { FileSnapshot, IBrokerAdapter, IngestionResult } from '@/types/broker';
+import { DividendTransaction } from '@/types/dividend';
+import { MarketPriceService } from '@/lib/services/marketPriceService';
+import { CurrencyService } from '@/lib/services/currencyService';
 
 export class XtbAdapter implements IBrokerAdapter {
   readonly id: BrokerId = 'XTB';
@@ -251,6 +254,7 @@ export class XtbAdapter implements IBrokerAdapter {
 
     // Parse Cash Operations if sheet exists
     const cashOps: IngestionResult['cashOperations'] = [];
+    const parsedDividends: DividendTransaction[] = [];
     const cashSheetName = wb.SheetNames.find(s => s.toLowerCase().includes('cash operation'));
     if (cashSheetName) {
       const cashSheet = wb.Sheets[cashSheetName];
@@ -265,9 +269,13 @@ export class XtbAdapter implements IBrokerAdapter {
         }
       }
 
+      const rawDividends: Array<{ id: string; ticker: string; comment: string; amount: number; timeUtc: string; timeMs: number }> = [];
+      const rawTaxes: Array<{ id: string; ticker: string; comment: string; amount: number; timeUtc: string; timeMs: number }> = [];
+
       if (cashHeaderIdx !== -1) {
         const headers = cashData[cashHeaderIdx].map(c => String(c ?? '').trim().toLowerCase());
         const cType = headers.indexOf('type');
+        const cTicker = headers.indexOf('ticker');
         const cTime = headers.indexOf('time');
         const cAmount = headers.indexOf('amount');
         const cId = headers.indexOf('id');
@@ -280,13 +288,19 @@ export class XtbAdapter implements IBrokerAdapter {
           const typeStr = String(row[cType] ?? '').trim().toLowerCase();
           const amount = parseNumber(row[cAmount]);
           const time = parseDate(row[cTime]);
+          const timeMs = new Date(time).getTime();
           const id = String(row[cId] ?? `cash-${r}`);
           const comment = String(row[cComment] ?? '');
+          const rowTicker = cTicker !== -1 ? String(row[cTicker] ?? '').trim() : '';
 
           let opType: CashLedgerTransaction['type'] = 'OTHER';
-          if (typeStr.includes('dividend')) opType = 'DIVIDEND';
-          else if (typeStr.includes('tax') || typeStr.includes('wht')) opType = 'TAX';
-          else if (typeStr.includes('interest')) opType = 'INTEREST';
+          if (typeStr.includes('dividend')) {
+            opType = 'DIVIDEND';
+            rawDividends.push({ id, ticker: rowTicker, comment, amount, timeUtc: time, timeMs });
+          } else if (typeStr.includes('tax') || typeStr.includes('wht') || typeStr.includes('withholding')) {
+            opType = 'TAX';
+            rawTaxes.push({ id, ticker: rowTicker, comment, amount, timeUtc: time, timeMs });
+          } else if (typeStr.includes('interest')) opType = 'INTEREST';
           else if (typeStr.includes('transfer')) opType = 'TRANSFER';
           else if (typeStr.includes('deposit')) opType = 'DEPOSIT';
           else if (typeStr.includes('withdrawal')) opType = 'WITHDRAWAL';
@@ -298,6 +312,183 @@ export class XtbAdapter implements IBrokerAdapter {
             amount,
             currency: accountCurrency,
             timeUtc: time,
+            comment,
+          });
+        }
+      }
+
+      // Pair Gross Dividends with Withholding Taxes
+      const usedTaxIndices = new Set<number>();
+
+      for (const div of rawDividends) {
+        let matchedTaxIdx = -1;
+        let minTimeDiff = Infinity;
+
+        // Try exact ticker match first, within 48h
+        for (let tIdx = 0; tIdx < rawTaxes.length; tIdx++) {
+          if (usedTaxIndices.has(tIdx)) continue;
+          const tax = rawTaxes[tIdx];
+          const tickerMatch = (div.ticker && tax.ticker && div.ticker.toUpperCase() === tax.ticker.toUpperCase()) ||
+            (div.ticker && tax.comment.toUpperCase().includes(div.ticker.toUpperCase()));
+
+          if (tickerMatch) {
+            const diff = Math.abs(div.timeMs - tax.timeMs);
+            if (diff <= 48 * 3600 * 1000 && diff < minTimeDiff) {
+              minTimeDiff = diff;
+              matchedTaxIdx = tIdx;
+            }
+          }
+        }
+
+        let taxAmount = 0;
+        if (matchedTaxIdx !== -1) {
+          usedTaxIndices.add(matchedTaxIdx);
+          taxAmount = Math.abs(rawTaxes[matchedTaxIdx].amount);
+        }
+
+        const gross = Math.max(0, div.amount);
+        const net = Math.max(0, gross - taxAmount);
+        const resolvedTicker = div.ticker || div.comment.split(/\s+/)[0] || 'UNKNOWN';
+        const normTicker = MarketPriceService.normalizeTicker(resolvedTicker);
+        const dividendCurrency = inferDividendCurrency(resolvedTicker, div.comment, accountCurrency);
+        const fxToCZK = CurrencyService.getRate(dividendCurrency, 'CZK');
+
+        parsedDividends.push({
+          id: `div_xtb_${accountNumber}_${div.id}`,
+          profileId: '', // Assigned by importer/store
+          accountId: `xtb-${accountNumber}`,
+          brokerId: 'XTB',
+          rawTicker: resolvedTicker,
+          normalizedTicker: normTicker,
+          paymentDateUtc: div.timeUtc,
+          yearMonth: div.timeUtc.substring(0, 7),
+          grossAmount: gross,
+          withholdingTax: taxAmount,
+          netAmount: net,
+          currency: dividendCurrency,
+          fxRateToCZK: fxToCZK,
+          grossAmountCZK: Math.round(gross * fxToCZK * 100) / 100,
+          withholdingTaxCZK: Math.round(taxAmount * fxToCZK * 100) / 100,
+          netAmountCZK: Math.round(net * fxToCZK * 100) / 100,
+          comment: div.comment,
+        });
+      }
+    }
+
+    // Step 5: Parse Closed Positions sheet (if present)
+    const closedPositions: ClosedPosition[] = [];
+    const closedSheetName = wb.SheetNames.find(s => s.toLowerCase().includes('closed position'));
+    if (closedSheetName) {
+      const closedSheet = wb.Sheets[closedSheetName];
+      const closedRows: any[][] = XLSX.utils.sheet_to_json(closedSheet, {
+        header: 1,
+        raw: false,
+        dateNF: 'yyyy-mm-dd hh:mm:ss',
+      });
+
+      // Find header row in Closed Positions sheet
+      let closedHeaderIdx = -1;
+      for (let r = 0; r < Math.min(25, closedRows.length); r++) {
+        const row = (closedRows[r] || []).map(c => String(c ?? '').trim().toLowerCase());
+        if (row.includes('ticker') && (row.includes('close price') || row.includes('profit/loss') || row.includes('position id'))) {
+          closedHeaderIdx = r;
+          break;
+        }
+      }
+
+      if (closedHeaderIdx >= 0) {
+        const cHeaders = (closedRows[closedHeaderIdx] || []).map(c => String(c ?? '').trim().toLowerCase());
+        const cCol = {
+          instrument: cHeaders.findIndex(h => h.includes('instrument') || h.includes('product')),
+          ticker: cHeaders.indexOf('ticker'),
+          category: cHeaders.indexOf('category'),
+          type: cHeaders.indexOf('type'),
+          volume: cHeaders.indexOf('volume'),
+          openPrice: cHeaders.findIndex(h => h.includes('open price')),
+          openTime: cHeaders.findIndex(h => h.includes('open time')),
+          closePrice: cHeaders.findIndex(h => h.includes('close price')),
+          closeTime: cHeaders.findIndex(h => h.includes('close time')),
+          profit: cHeaders.findIndex(h => h.includes('profit/loss') || h.includes('profit')),
+          purchaseValue: cHeaders.findIndex(h => h.includes('purchase value')),
+          saleValue: cHeaders.findIndex(h => h.includes('sale value')),
+          commission: cHeaders.indexOf('commission'),
+          positionId: cHeaders.findIndex(h => h.includes('position id') || h.includes('position')),
+          comment: cHeaders.indexOf('comment'),
+        };
+
+        for (let r = closedHeaderIdx + 1; r < closedRows.length; r++) {
+          const row = closedRows[r] || [];
+          const rawTicker = String(row[cCol.ticker] ?? '').trim();
+          if (!rawTicker) continue;
+
+          const rawInstrument = String(row[cCol.instrument] ?? rawTicker).trim();
+          const rawCategory = String(row[cCol.category] ?? 'STOCK').trim();
+          const volume = parseNumber(row[cCol.volume]);
+          const openPrice = parseNumber(row[cCol.openPrice]);
+          const closePrice = parseNumber(row[cCol.closePrice]);
+          const openTime = parseDate(row[cCol.openTime]);
+          const closeTime = parseDate(row[cCol.closeTime]);
+          const profitNative = parseNumber(row[cCol.profit]);
+          const purchaseValNative = parseNumber(row[cCol.purchaseValue]) || (volume * openPrice);
+          const saleValNative = parseNumber(row[cCol.saleValue]) || (volume * closePrice);
+          const commissionNative = parseNumber(row[cCol.commission]);
+          const positionId = String(row[cCol.positionId] ?? `close-${r}`).trim();
+          const comment = String(row[cCol.comment] ?? '').trim();
+
+          const instCurrency = inferInstrumentCurrency(rawTicker, accountCurrency);
+          const assetClass = mapCategory(rawCategory);
+          const normalizedTicker = MarketPriceService.normalizeTicker(rawTicker);
+
+          // Calculate holding period in days
+          const openMs = new Date(openTime).getTime();
+          const closeMs = new Date(closeTime).getTime();
+          const holdingPeriodDays = Math.max(0, Math.round((closeMs - openMs) / (24 * 3600 * 1000)));
+
+          // Czech 3-Year Time Test exemption (§ 4 odst. 1 písm. w) ZDP)
+          // 3 years = 1096 days (including leap year)
+          const isTimeTestExempt = holdingPeriodDays >= 1096;
+
+          // Conversion to CZK (target currency)
+          const fxRateToCZK = CurrencyService.getRate(instCurrency, 'CZK');
+          const purchaseTarget = purchaseValNative * fxRateToCZK;
+          const saleTarget = saleValNative * fxRateToCZK;
+          const profitTarget = profitNative * fxRateToCZK;
+          const commissionTarget = commissionNative * fxRateToCZK;
+
+          // Profit percentage
+          const profitPercent = purchaseValNative > 0
+            ? Math.round((profitNative / purchaseValNative) * 10000) / 100
+            : 0;
+
+          // Estimated 15% tax saved if exempt
+          const estimatedTaxSaved = isTimeTestExempt && profitTarget > 0 ? profitTarget * 0.15 : 0;
+
+          closedPositions.push({
+            id: `xtb-${accountNumber}-close-${positionId}`,
+            accountId: `xtb-${accountNumber}`,
+            brokerId: 'XTB',
+            rawTicker,
+            normalizedTicker,
+            name: rawInstrument,
+            assetClass,
+            instrumentCurrency: instCurrency,
+            volume,
+            openPrice,
+            openDateUtc: openTime,
+            closePrice,
+            closeDateUtc: closeTime,
+            holdingPeriodDays,
+            purchaseValueNative: purchaseValNative,
+            saleValueNative: saleValNative,
+            profitNative,
+            profitPercent,
+            commissionNative,
+            purchaseValueTarget: Math.round(purchaseTarget * 100) / 100,
+            saleValueTarget: Math.round(saleTarget * 100) / 100,
+            profitTarget: Math.round(profitTarget * 100) / 100,
+            commissionTarget: Math.round(commissionTarget * 100) / 100,
+            isTimeTestExempt,
+            estimatedTaxSavedTarget: Math.round(estimatedTaxSaved * 100) / 100,
             comment,
           });
         }
@@ -315,6 +506,8 @@ export class XtbAdapter implements IBrokerAdapter {
       holdings: finalHoldings,
       lots: finalLots,
       cashOperations: cashOps,
+      dividends: parsedDividends,
+      closedPositions,
       warnings,
     };
   }
@@ -355,5 +548,18 @@ function inferInstrumentCurrency(ticker: string, fallback: CurrencyCode): Curren
     // We default to accountCurrency or USD
     return fallback === 'USD' ? 'USD' : fallback === 'EUR' ? 'EUR' : 'USD';
   }
+  return fallback;
+}
+
+function inferDividendCurrency(ticker: string, comment: string, fallback: CurrencyCode): CurrencyCode {
+  if (comment) {
+    const match = comment.match(/\b(USD|EUR|CZK|GBP)\b/i);
+    if (match) return match[1].toUpperCase() as CurrencyCode;
+  }
+  const t = ticker.toUpperCase().trim();
+  if (t.endsWith('.US')) return 'USD';
+  if (t.endsWith('.CZ') || t.endsWith('.PR')) return 'CZK';
+  if (t.endsWith('.DE') || t.endsWith('.NL') || t.endsWith('.FR') || t.endsWith('.IT') || t.endsWith('.ES') || t.endsWith('.EU')) return 'EUR';
+  if (t.endsWith('.UK') || t.endsWith('.L')) return 'GBP';
   return fallback;
 }

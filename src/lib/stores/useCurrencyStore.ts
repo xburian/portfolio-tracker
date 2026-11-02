@@ -9,6 +9,7 @@ interface CurrencyState {
   setDisplayCurrency: (curr: CurrencyCode) => void;
   updateRates: () => Promise<void>;
   convert: (amount: number, from: CurrencyCode, to?: CurrencyCode) => number;
+  formatCurrency: (amount: number, currency?: CurrencyCode) => string;
 }
 
 export const useCurrencyStore = create<CurrencyState>()(
@@ -29,6 +30,25 @@ export const useCurrencyStore = create<CurrencyState>()(
       convert: (amount, from, to) => {
         const target = to || get().displayCurrency;
         return CurrencyService.convert(amount, from, target);
+      },
+      formatCurrency: (amountCZK, targetCurrency) => {
+        const cur = targetCurrency || get().displayCurrency;
+        const converted = CurrencyService.convert(amountCZK, 'CZK', cur);
+        const config: Record<CurrencyCode, { locale: string; currency: string }> = {
+          CZK: { locale: 'cs-CZ', currency: 'CZK' },
+          EUR: { locale: 'de-DE', currency: 'EUR' },
+          USD: { locale: 'en-US', currency: 'USD' },
+          GBP: { locale: 'en-GB', currency: 'GBP' },
+        };
+        const c = config[cur] || config.CZK;
+        const absVal = Math.abs(converted);
+        const digits = absVal < 100 && cur !== 'CZK' ? 2 : 0;
+        return new Intl.NumberFormat(c.locale, {
+          style: 'currency',
+          currency: c.currency,
+          minimumFractionDigits: digits,
+          maximumFractionDigits: digits,
+        }).format(converted);
       },
     }),
     { name: 'fintech-currency-settings' }

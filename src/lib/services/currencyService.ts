@@ -66,4 +66,17 @@ export class CurrencyService {
     const rate = this.getRate(from, to);
     return amount * rate;
   }
+
+  static getRatesTo(targetCurrency: CurrencyCode = 'CZK'): Record<CurrencyCode, number> {
+    const currencies: CurrencyCode[] = ['CZK', 'EUR', 'USD', 'GBP'];
+    const result: Partial<Record<CurrencyCode, number>> = {};
+    for (const c of currencies) {
+      result[c] = this.getRate(c, targetCurrency);
+    }
+    return result as Record<CurrencyCode, number>;
+  }
+
+  static getRatesToCZK(): Record<CurrencyCode, number> {
+    return this.getRatesTo('CZK');
+  }
 }

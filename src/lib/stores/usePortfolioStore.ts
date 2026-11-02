@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Account, AutoTagRule, BrokerId, Cluster, CurrencyCode, Holding, PortfolioSummary, PositionLot, Profile, ValuationDetail } from '@/types/portfolio';
+import { Account, AutoTagRule, BrokerId, Cluster, CurrencyCode, Holding, PortfolioSummary, PositionLot, Profile, ValuationDetail, ClosedPosition, ClosedPositionsSummary } from '@/types/portfolio';
 import { DEFAULT_PROFILE_ID, db } from '@/lib/db';
 import { brokerRegistry } from '@/lib/parsers/registry';
 import { FileSnapshot } from '@/types/broker';
@@ -7,6 +7,12 @@ import { NlpClusterService } from '@/lib/services/nlpClusterService';
 import { MarketPriceService } from '@/lib/services/marketPriceService';
 import { CurrencyService } from '@/lib/services/currencyService';
 import { StorageCompactionService, CompactionReport } from '@/lib/services/storageCompactionService';
+import { DividendTransaction, MonthlyDividendAggregate, HoldingDividendSummary, AnnualDividendAggregate } from '@/types/dividend';
+import { DividendService } from '@/lib/services/dividendService';
+import { CurrencyDecompositionService } from '@/lib/services/currencyDecompositionService';
+import { HoldingDailyChange, CurrencyAttributionBreakdown } from '@/types/attribution';
+import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
+import { ServerSyncService } from '@/lib/services/serverSyncService';
 
 interface PortfolioState {
   // Profiles
@@ -19,6 +25,8 @@ interface PortfolioState {
   lots: PositionLot[];
   clusters: Cluster[];
   rules: AutoTagRule[];
+  dividends: DividendTransaction[];
+  closedPositions: ClosedPosition[];
   
   selectedAccountFilter: string | null;
   selectedClusterFilter: string | null;
@@ -60,6 +68,16 @@ interface PortfolioState {
   // Computed Selectors
   getValuations: (displayCurrency: CurrencyCode, includeCash?: boolean) => ValuationDetail[];
   getSummary: (displayCurrency: CurrencyCode) => PortfolioSummary;
+  getDividends: () => DividendTransaction[];
+  getDividendsByMonth: () => MonthlyDividendAggregate[];
+  getDividendsByYear: () => AnnualDividendAggregate[];
+  getAvailableDividendYears: () => string[];
+  getDividendsByHolding: () => HoldingDividendSummary[];
+  getDividendSummary: () => { totalNetCZK: number; totalGrossCZK: number; totalTaxCZK: number; avgMonthlyNetCZK: number; effectiveTaxRate: number; count: number };
+  getHoldingDailyChanges: () => HoldingDailyChange[];
+  getCurrencyAttribution: () => CurrencyAttributionBreakdown[];
+  getClosedPositions: () => ClosedPosition[];
+  getClosedPositionsSummary: (displayCurrency: CurrencyCode) => ClosedPositionsSummary;
 }
 
 export const usePortfolioStore = create<PortfolioState>((set, get) => ({
@@ -71,6 +89,8 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   lots: [],
   clusters: [],
   rules: [],
+  dividends: [],
+  closedPositions: [],
 
   selectedAccountFilter: null,
   selectedClusterFilter: null,
@@ -83,6 +103,12 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   initFromDb: async () => {
     set({ isLoading: true });
     try {
+      // Check if client DB is empty; if so, attempt pull from backend In-Memory / Redis storage
+      const existingAccountsCount = await db.accounts.count();
+      if (existingAccountsCount === 0) {
+        await ServerSyncService.pullFromBackend().catch(() => {});
+      }
+
       let profiles = await db.profiles.toArray();
       if (profiles.length === 0) {
         const defaultProfile: Profile = {
@@ -117,6 +143,9 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
       set({ profiles, activeProfileId: activeId });
       await get().switchProfile(activeId);
+
+      // Keep backend In-Memory storage synchronized
+      ServerSyncService.pushToBackend().catch(console.warn);
     } catch (e) {
       console.error('Failed to init from DB', e);
       set({ isLoading: false });
@@ -130,12 +159,14 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     }
 
     try {
-      let [accs, hlds, lts, cls, rls] = await Promise.all([
+      let [accs, hlds, lts, cls, rls, divs, cps] = await Promise.all([
         db.accounts.toArray(),
         db.holdings.toArray(),
         db.lots.toArray(),
         db.clusters.toArray(),
         db.rules.toArray(),
+        db.dividends.toArray(),
+        db.closedPositions.toArray(),
       ]);
 
       if (profileId !== 'consolidated') {
@@ -144,7 +175,20 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         lts = lts.filter(l => (l.profileId || DEFAULT_PROFILE_ID) === profileId);
         cls = cls.filter(c => (c.profileId || DEFAULT_PROFILE_ID) === profileId || !c.profileId);
         rls = rls.filter(r => (r.profileId || DEFAULT_PROFILE_ID) === profileId || !r.profileId);
+        divs = divs.filter(d => (d.profileId || DEFAULT_PROFILE_ID) === profileId);
+        cps = cps.filter(c => (c.profileId || DEFAULT_PROFILE_ID) === profileId);
       }
+
+      const recalculatedDivs = divs.map(d => {
+        const rate = CurrencyService.getRate(d.currency, 'CZK');
+        return {
+          ...d,
+          fxRateToCZK: rate,
+          grossAmountCZK: Math.round(d.grossAmount * rate * 100) / 100,
+          withholdingTaxCZK: Math.round(d.withholdingTax * rate * 100) / 100,
+          netAmountCZK: Math.round(d.netAmount * rate * 100) / 100,
+        };
+      });
 
       set({
         accounts: accs,
@@ -152,6 +196,8 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         lots: lts,
         clusters: cls,
         rules: rls,
+        dividends: recalculatedDivs,
+        closedPositions: cps,
         isLoading: false,
       });
 
@@ -177,6 +223,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const profiles = await db.profiles.toArray();
     set({ profiles });
     await get().switchProfile(newProfile.id);
+    ServerSyncService.pushToBackend().catch(console.warn);
     return newProfile.id;
   },
 
@@ -195,6 +242,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const profiles = await db.profiles.toArray();
     set({ profiles });
     await get().switchProfile(DEFAULT_PROFILE_ID);
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   compactDatabase: async () => {
@@ -221,15 +269,17 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       lastImportAt: new Date().toISOString(),
     };
 
-    // Purge any existing lots/holdings for this account to guarantee no duplicate accumulations
+    // Purge any existing lots/holdings/closedPositions for this account to guarantee no duplicate accumulations
     await db.lots.where('accountId').equals(accountId).delete();
     await db.holdings.where('accountId').equals(accountId).delete();
+    await db.closedPositions.where('accountId').equals(accountId).delete();
 
     // Also clean any un-prefixed legacy accountId (e.g. "xtb-1726393" vs "profile_lukas_default:xtb-1726393")
     const legacyAccountId = `${result.account.brokerId.toLowerCase()}-${result.account.accountNumber}`;
     if (legacyAccountId !== accountId) {
       await db.lots.where('accountId').equals(legacyAccountId).delete();
       await db.holdings.where('accountId').equals(legacyAccountId).delete();
+      await db.closedPositions.where('accountId').equals(legacyAccountId).delete();
       await db.accounts.delete(legacyAccountId);
     }
 
@@ -303,6 +353,33 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       await db.cashLedger.bulkPut(ops);
     }
 
+    // Save dividends if present
+    if (result.dividends && result.dividends.length > 0) {
+      const divs = result.dividends.map(div => {
+        const fxRate = CurrencyService.getRate(div.currency, 'CZK');
+        return {
+          ...div,
+          profileId: targetProfileId,
+          accountId,
+          fxRateToCZK: fxRate,
+          grossAmountCZK: Math.round(div.grossAmount * fxRate * 100) / 100,
+          withholdingTaxCZK: Math.round(div.withholdingTax * fxRate * 100) / 100,
+          netAmountCZK: Math.round(div.netAmount * fxRate * 100) / 100,
+        };
+      });
+      await db.dividends.bulkPut(divs);
+    }
+
+    // Save closed positions if present
+    if (result.closedPositions && result.closedPositions.length > 0) {
+      const closed = result.closedPositions.map(cp => ({
+        ...cp,
+        profileId: targetProfileId,
+        accountId,
+      }));
+      await db.closedPositions.bulkPut(closed);
+    }
+
     // Run auto-clustering across all holdings
     const allHoldings = await db.holdings.toArray();
     const clusterResult = await NlpClusterService.autoClusterHoldings(allHoldings);
@@ -313,6 +390,9 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
 
     // Refresh state
     await get().switchProfile(activeProfileId);
+
+    // Push to backend In-Memory / Redis storage
+    ServerSyncService.pushToBackend().catch(console.warn);
 
     return {
       accountName: account.name,
@@ -353,6 +433,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       db.holdings.where('profileId').equals(targetProfileId).delete(),
       db.lots.where('profileId').equals(targetProfileId).delete(),
       db.cashLedger.where('profileId').equals(targetProfileId).delete(),
+      db.closedPositions.where('profileId').equals(targetProfileId).delete(),
     ]);
 
     const res = await fetch('/api/sample-files');
@@ -393,6 +474,8 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       db.lots.clear(),
       db.cashLedger.clear(),
       db.clusters.clear(),
+      db.dividends.clear(),
+      db.closedPositions.clear(),
     ]);
 
     // 2. Fetch sample statements from backend
@@ -459,6 +542,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
           return {
             ...h,
             currentPrice: q.price,
+            previousClosePrice: q.previousClose || q.price,
             lastPriceUpdate: new Date().toISOString(),
           };
         }
@@ -494,6 +578,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       holdings: holdings.map(h => h.id === holdingId ? updated : h),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   saveAutoRule: async (pattern: string, clusterId: string, clusterName: string) => {
@@ -521,6 +606,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     const clusterResult = await NlpClusterService.autoClusterHoldings(allHoldings);
     await db.holdings.bulkPut(clusterResult.updatedHoldings);
     await get().initFromDb();
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   updateHoldingTags: async (holdingId: string, tags: string[]) => {
@@ -533,6 +619,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       holdings: holdings.map(h => h.id === holdingId ? updated : h),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   clearAllData: async () => {
@@ -545,6 +632,8 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         db.clusters.clear(),
         db.rules.clear(),
         db.cashLedger.clear(),
+        db.dividends.clear(),
+        db.closedPositions.clear(),
       ]);
     } else {
       await Promise.all([
@@ -553,10 +642,13 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
         db.lots.where('profileId').equals(activeProfileId).delete(),
         db.clusters.where('profileId').equals(activeProfileId).delete(),
         db.cashLedger.where('profileId').equals(activeProfileId).delete(),
+        db.dividends.where('profileId').equals(activeProfileId).delete(),
+        db.closedPositions.where('profileId').equals(activeProfileId).delete(),
       ]);
     }
 
     await get().switchProfile(activeProfileId);
+    ServerSyncService.pushToBackend(true).catch(console.warn);
   },
 
   updateAccountCash: async (accountId: string, cashBalances: Record<CurrencyCode, number>) => {
@@ -574,6 +666,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       accounts: accounts.map(a => a.id === accountId ? updated : a),
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   addCashAccount: async (name: string, balances: Record<CurrencyCode, number>, brokerId: BrokerId = 'BANK') => {
@@ -611,6 +704,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
     set({
       accounts: [...accounts, newAccount],
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
     return accountId;
   },
 
@@ -628,6 +722,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       lots: lots.filter(l => l.accountId !== accountId),
       selectedAccountFilter: get().selectedAccountFilter === accountId ? null : get().selectedAccountFilter,
     });
+    ServerSyncService.pushToBackend().catch(console.warn);
   },
 
   setAccountFilter: (accId) => set({ selectedAccountFilter: accId }),
@@ -878,6 +973,157 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       top5Concentration,
       holdingsCount: allValuations.length,
       accountsCount: relevantAccounts.length,
+    };
+  },
+
+  getDividends: () => {
+    return get().dividends;
+  },
+
+  getDividendsByMonth: () => {
+    return DividendService.aggregateByMonth(get().dividends);
+  },
+
+  getDividendsByYear: () => {
+    return DividendService.aggregateByYear(get().dividends);
+  },
+
+  getAvailableDividendYears: () => {
+    return DividendService.getAvailableYears(get().dividends);
+  },
+
+  getDividendsByHolding: () => {
+    return DividendService.aggregateByHolding(get().dividends, get().holdings, get().lots);
+  },
+
+  getDividendSummary: () => {
+    return DividendService.calculateOverallSummary(get().dividends);
+  },
+
+  getHoldingDailyChanges: () => {
+    const { holdings } = get();
+    const ratesToCZK = CurrencyService.getRatesToCZK();
+    return CurrencyDecompositionService.calculateHoldingDailyChanges(holdings, ratesToCZK);
+  },
+
+  getCurrencyAttribution: () => {
+    const { holdings, lots } = get();
+    const ratesToCZK = CurrencyService.getRatesToCZK();
+    return CurrencyDecompositionService.calculateCurrencyAttribution(holdings, lots, ratesToCZK);
+  },
+
+  getClosedPositions: () => {
+    const { closedPositions, selectedAccountFilter, searchQuery } = get();
+    let filtered = closedPositions;
+    if (selectedAccountFilter) {
+      filtered = filtered.filter(p => p.accountId === selectedAccountFilter);
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(p => 
+        p.normalizedTicker.toLowerCase().includes(q) ||
+        p.rawTicker.toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q)
+      );
+    }
+    return filtered;
+  },
+
+  getClosedPositionsSummary: (displayCurrency: CurrencyCode): ClosedPositionsSummary => {
+    const positions = get().getClosedPositions();
+    if (positions.length === 0) {
+      return {
+        totalTradesCount: 0,
+        winningTradesCount: 0,
+        losingTradesCount: 0,
+        winRatePercent: 0,
+        profitFactor: 0,
+        totalRealizedProfitTarget: 0,
+        totalGrossProfitTarget: 0,
+        totalGrossLossTarget: 0,
+        totalCommissionPaidTarget: 0,
+        avgWinningTradeTarget: 0,
+        avgLosingTradeTarget: 0,
+        largestWinTarget: null,
+        largestLossTarget: null,
+        avgHoldingPeriodDays: 0,
+        taxExemptTradesCount: 0,
+        taxableTradesCount: 0,
+        totalTaxSavedTarget: 0,
+      };
+    }
+
+    let winningCount = 0;
+    let losingCount = 0;
+    let totalGrossProfitTarget = 0;
+    let totalGrossLossTarget = 0;
+    let totalRealizedProfitTarget = 0;
+    let totalCommissionPaidTarget = 0;
+    let totalHoldingDays = 0;
+    let taxExemptTradesCount = 0;
+    let taxableTradesCount = 0;
+    let totalTaxSavedTarget = 0;
+
+    let largestWinTarget: ClosedPosition | null = null;
+    let largestLossTarget: ClosedPosition | null = null;
+
+    for (const p of positions) {
+      const profitDisplay = CurrencyService.convert(p.profitNative, p.instrumentCurrency, displayCurrency);
+      const commDisplay = CurrencyService.convert(p.commissionNative, p.instrumentCurrency, displayCurrency);
+      
+      totalRealizedProfitTarget += profitDisplay;
+      totalCommissionPaidTarget += commDisplay;
+      totalHoldingDays += p.holdingPeriodDays || 0;
+
+      if (profitDisplay > 0) {
+        winningCount++;
+        totalGrossProfitTarget += profitDisplay;
+        if (!largestWinTarget || profitDisplay > CurrencyService.convert(largestWinTarget.profitNative, largestWinTarget.instrumentCurrency, displayCurrency)) {
+          largestWinTarget = p;
+        }
+      } else if (profitDisplay < 0) {
+        losingCount++;
+        totalGrossLossTarget += Math.abs(profitDisplay);
+        if (!largestLossTarget || profitDisplay < CurrencyService.convert(largestLossTarget.profitNative, largestLossTarget.instrumentCurrency, displayCurrency)) {
+          largestLossTarget = p;
+        }
+      }
+
+      if (p.isTimeTestExempt) {
+        taxExemptTradesCount++;
+        if (profitDisplay > 0) {
+          totalTaxSavedTarget += profitDisplay * 0.15;
+        }
+      } else {
+        taxableTradesCount++;
+      }
+    }
+
+    const totalTradesCount = positions.length;
+    const winRatePercent = totalTradesCount > 0 ? (winningCount / totalTradesCount) * 100 : 0;
+    const profitFactor = totalGrossLossTarget > 0 ? totalGrossProfitTarget / totalGrossLossTarget : (totalGrossProfitTarget > 0 ? 999 : 0);
+    const avgWinningTradeTarget = winningCount > 0 ? totalGrossProfitTarget / winningCount : 0;
+    const avgLosingTradeTarget = losingCount > 0 ? totalGrossLossTarget / losingCount : 0;
+    const avgHoldingPeriodDays = totalTradesCount > 0 ? Math.round(totalHoldingDays / totalTradesCount) : 0;
+
+    return {
+      totalTradesCount,
+      winningTradesCount: winningCount,
+      losingTradesCount: losingCount,
+      winRatePercent,
+      profitFactor,
+      totalRealizedProfitTarget,
+      totalGrossProfitTarget,
+      totalGrossLossTarget,
+      totalCommissionPaidTarget,
+      avgWinningTradeTarget,
+      avgLosingTradeTarget,
+      largestWinTarget,
+      largestLossTarget,
+      avgHoldingPeriodDays,
+      taxExemptTradesCount,
+      taxableTradesCount,
+      totalTaxSavedTarget,
     };
   },
 }));

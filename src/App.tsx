@@ -8,13 +8,19 @@ import { NavigationTabs } from '@/components/layout/NavigationTabs';
 import { MetricDeck } from '@/components/dashboard/MetricDeck';
 import { PerformanceMetricsCard } from '@/components/dashboard/PerformanceMetricsCard';
 import { DonutAllocation } from '@/components/dashboard/DonutAllocation';
+import { DailyChangeDeck } from '@/components/dashboard/DailyChangeDeck';
+import { FIREStatusBar } from '@/components/dashboard/FIREStatusBar';
 import { QuickFilterBar } from '@/components/dashboard/QuickFilterBar';
 import { HoldingsTable } from '@/components/holdings/HoldingsTable';
 import { AllocationBreakdown } from '@/components/breakdown/AllocationBreakdown';
 import { ClusterManagerDrawer } from '@/components/clusters/ClusterManagerDrawer';
 import { ProjectionSimulator } from '@/components/projection/ProjectionSimulator';
+import { BudgetPlanner } from '@/components/budget/BudgetPlanner';
+import { DividendsView } from '@/components/dividends/DividendsView';
 import { ImportModal } from '@/components/import/ImportModal';
 import { CashManagerModal } from '@/components/cash/CashManagerModal';
+import { SmartDCARebalancerModal } from '@/components/rebalance/SmartDCARebalancerModal';
+import { useBudgetStore } from '@/lib/stores/useBudgetStore';
 import { Upload, Sparkles, PieChart, ShieldCheck, RotateCcw } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -36,23 +42,30 @@ export const App: React.FC = () => {
   const updateRates = useCurrencyStore((s) => s.updateRates);
   const activeTab = usePreferencesStore((s) => s.activeTab);
   const initAuth = useAuthStore((s) => s.initAuth);
+  const initBudget = useBudgetStore((s) => s.initBudget);
 
   const [importOpen, setImportOpen] = useState(false);
   const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [rebalancerOpen, setRebalancerOpen] = useState(false);
   const [isDemoLoading, setIsDemoLoading] = useState(false);
 
   useEffect(() => {
     initFromDb();
     updateRates();
     initAuth();
-  }, [initFromDb, updateRates, initAuth]);
+    initBudget();
+  }, [initFromDb, updateRates, initAuth, initBudget]);
 
   const valuations = getValuations(displayCurrency);
   const summary = getSummary(displayCurrency);
 
   return (
     <div className="min-h-screen bg-[#0B0E14] text-slate-100 flex flex-col antialiased">
-      <Navbar onOpenImport={() => setImportOpen(true)} onOpenCash={() => setCashModalOpen(true)} />
+      <Navbar
+        onOpenImport={() => setImportOpen(true)}
+        onOpenCash={() => setCashModalOpen(true)}
+        onOpenRebalancer={() => setRebalancerOpen(true)}
+      />
       <NavigationTabs />
 
       <main className="flex-1 max-w-[1720px] 2xl:max-w-[1920px] w-full mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-6">
@@ -125,6 +138,8 @@ export const App: React.FC = () => {
             {activeTab === 'dashboard' && (
               <>
                 <MetricDeck summary={summary} onOpenCashManager={() => setCashModalOpen(true)} />
+                <FIREStatusBar onOpenRebalancer={() => setRebalancerOpen(true)} />
+                <DailyChangeDeck />
                 <PerformanceMetricsCard valuations={valuations} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   <div className="lg:col-span-2 xl:col-span-3 flex flex-col gap-4">
@@ -145,6 +160,14 @@ export const App: React.FC = () => {
               </div>
             )}
 
+            {activeTab === 'budget' && (
+              <BudgetPlanner />
+            )}
+
+            {activeTab === 'dividends' && (
+              <DividendsView />
+            )}
+
             {activeTab === 'breakdown' && (
               <AllocationBreakdown valuations={valuations} />
             )}
@@ -162,6 +185,11 @@ export const App: React.FC = () => {
 
       <ImportModal open={importOpen} onOpenChange={setImportOpen} />
       <CashManagerModal open={cashModalOpen} onOpenChange={setCashModalOpen} />
+      <SmartDCARebalancerModal
+        open={rebalancerOpen}
+        onOpenChange={setRebalancerOpen}
+        valuations={valuations}
+      />
     </div>
   );
 };

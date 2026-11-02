@@ -201,3 +201,101 @@ describe('Auth Service (Password Hashing, Registration, Login & Rotation)', () =
     );
   });
 });
+
+describe('Portfolio & Budget Synchronization in In-Memory / Redis Storage', () => {
+  let storage: MemoryStorage;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+  });
+
+  it('persists complete portfolio, dividend and budget entities in In-Memory DB', async () => {
+    const userId = 'user_lukas_test';
+
+    const dummyHoldings = [
+      { id: 'h1', ticker: 'AAPL', shares: 10, currency: 'USD' },
+      { id: 'h2', ticker: 'SXR8.DE', shares: 5, currency: 'EUR' },
+    ];
+    const dummyDividends = [
+      { id: 'div1', ticker: 'AAPL', netAmountCZK: 350, currency: 'USD' },
+    ];
+    const dummySalary = {
+      profileId: 'prof1',
+      baseMonthlyNetSalaryCZK: 85000,
+      paydayDayOfMonth: 15,
+      annualIncreasePercentage: 5,
+    };
+    const dummyExpenses = [
+      { id: 'exp1', name: 'Nájem', monthlyAmountCZK: 25000 },
+      { id: 'exp2', name: 'Jídlo', monthlyAmountCZK: 12000 },
+    ];
+
+    // Store into in-memory storage
+    await storage.set(`portfolio:${userId}:holdings`, JSON.stringify(dummyHoldings));
+    await storage.set(`portfolio:${userId}:dividends`, JSON.stringify(dummyDividends));
+    await storage.set(`portfolio:${userId}:salaryConfigs`, JSON.stringify([dummySalary]));
+    await storage.set(`portfolio:${userId}:expenseCategories`, JSON.stringify(dummyExpenses));
+    await storage.set(`portfolio:${userId}:meta`, JSON.stringify({
+      syncedAt: new Date().toISOString(),
+      counts: { holdings: 2, dividends: 1, salaryConfigs: 1, expenseCategories: 2 },
+    }));
+
+    // Verify retrieval
+    const retrievedHoldings = JSON.parse((await storage.get(`portfolio:${userId}:holdings`)) || '[]');
+    expect(retrievedHoldings).toHaveLength(2);
+    expect(retrievedHoldings[0].ticker).toBe('AAPL');
+
+    const retrievedDividends = JSON.parse((await storage.get(`portfolio:${userId}:dividends`)) || '[]');
+    expect(retrievedDividends[0].netAmountCZK).toBe(350);
+
+    const retrievedSalary = JSON.parse((await storage.get(`portfolio:${userId}:salaryConfigs`)) || '[]');
+    expect(retrievedSalary[0].baseMonthlyNetSalaryCZK).toBe(85000);
+
+    const retrievedExpenses = JSON.parse((await storage.get(`portfolio:${userId}:expenseCategories`)) || '[]');
+    expect(retrievedExpenses).toHaveLength(2);
+
+    // Verify key search and isolation
+    const keys = await storage.keys(`portfolio:${userId}:*`);
+    expect(keys).toHaveLength(5);
+    expect(keys).toContain(`portfolio:${userId}:holdings`);
+    expect(keys).toContain(`portfolio:${userId}:dividends`);
+    expect(keys).toContain(`portfolio:${userId}:salaryConfigs`);
+    expect(keys).toContain(`portfolio:${userId}:expenseCategories`);
+    expect(keys).toContain(`portfolio:${userId}:meta`);
+  });
+
+  it('guarantees strict multi-tenant isolation between different users in In-Memory DB', async () => {
+    const userA = 'user_alice';
+    const userB = 'user_bob';
+
+    await storage.set(`portfolio:${userA}:holdings`, JSON.stringify([{ id: 'alice_h1' }]));
+    await storage.set(`portfolio:${userB}:holdings`, JSON.stringify([{ id: 'bob_h1' }]));
+
+    const aliceHoldings = JSON.parse((await storage.get(`portfolio:${userA}:holdings`)) || '[]');
+    const bobHoldings = JSON.parse((await storage.get(`portfolio:${userB}:holdings`)) || '[]');
+
+    expect(aliceHoldings[0].id).toBe('alice_h1');
+    expect(bobHoldings[0].id).toBe('bob_h1');
+
+    // Deleting userA's portfolio must not affect userB
+    const userAKeys = await storage.keys(`portfolio:${userA}:*`);
+    for (const k of userAKeys) {
+      await storage.del(k);
+    }
+
+    expect(await storage.get(`portfolio:${userA}:holdings`)).toBeNull();
+    expect(await storage.get(`portfolio:${userB}:holdings`)).not.toBeNull();
+  });
+
+  it('correctly tracks storage status with active keys count in In-Memory DB', async () => {
+    const initialStatus = await storage.getStatus();
+    const initialCount = initialStatus.keysCount || 0;
+
+    await storage.set('portfolio:default_user:accounts', JSON.stringify([{ id: 'acc1' }]));
+    await storage.set('portfolio:default_user:holdings', JSON.stringify([{ id: 'h1' }]));
+    await storage.set('portfolio:default_user:lots', JSON.stringify([{ id: 'l1' }]));
+
+    const updatedStatus = await storage.getStatus();
+    expect(updatedStatus.keysCount).toBe(initialCount + 3);
+  });
+});

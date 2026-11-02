@@ -1,7 +1,8 @@
 import * as XLSX from 'xlsx';
-import { AssetClass, BrokerId, CurrencyCode } from '@/types/portfolio';
+import { AssetClass, BrokerId, CurrencyCode, ClosedPosition } from '@/types/portfolio';
 import { FileSnapshot, IBrokerAdapter, IngestionResult } from '@/types/broker';
 import { MarketPriceService } from '@/lib/services/marketPriceService';
+import { CurrencyService } from '@/lib/services/currencyService';
 
 export class DegiroAdapter implements IBrokerAdapter {
   readonly id: BrokerId = 'DEGIRO';
@@ -59,10 +60,10 @@ export class DegiroAdapter implements IBrokerAdapter {
   }
 
   async parse(file: FileSnapshot): Promise<IngestionResult> {
-    const ext = file.fileExtension.toLowerCase();
+    const ext = file.fileExtension.toLowerCase().replace(/^\./, '');
     let rows: any[][];
 
-    if (ext === '.xlsx' || ext === '.xls') {
+    if (ext === 'xlsx' || ext === 'xls') {
       const buffer = file.data instanceof ArrayBuffer 
         ? new Uint8Array(file.data)
         : file.data;
@@ -106,6 +107,7 @@ export class DegiroAdapter implements IBrokerAdapter {
       localValue: headers.findIndex(h => h.includes('local value') || h.includes('lokale waarde')),
       valueEur: headers.findIndex(h => h.includes('value eur') || h.includes('waarde eur') || h === 'value'),
       orderId: headers.findIndex(h => h.includes('order id') || h.includes('orderid') || h.includes('id')),
+      feeEur: headers.findIndex(h => h.includes('third party fees') || h.includes('transaction and/or') || h.includes('kosten')),
     };
 
     if (col.price !== -1 && col.price + 1 < headers.length) {
@@ -122,6 +124,7 @@ export class DegiroAdapter implements IBrokerAdapter {
       price: number;
       currency: CurrencyCode;
       orderId: string;
+      feeEur: number;
       timestamp: number;
     }
 
@@ -141,6 +144,7 @@ export class DegiroAdapter implements IBrokerAdapter {
       const timeStr = col.time !== -1 ? String(parts[col.time] || '00:00').trim() : '00:00';
       const refExchange = col.refExchange !== -1 ? String(parts[col.refExchange] || '').trim() : '';
       const orderId = col.orderId !== -1 && parts[col.orderId] ? String(parts[col.orderId]).trim() : `degiro-${i}`;
+      const feeEur = col.feeEur !== -1 ? parseNumber(parts[col.feeEur]) : 0;
 
       let currency: CurrencyCode = 'EUR';
       if (col.priceCurrency !== -1 && parts[col.priceCurrency]) {
@@ -159,6 +163,7 @@ export class DegiroAdapter implements IBrokerAdapter {
         price,
         currency,
         orderId,
+        feeEur,
         timestamp,
       });
     }
@@ -184,6 +189,7 @@ export class DegiroAdapter implements IBrokerAdapter {
     }
 
     const trackerMap = new Map<string, PositionTracker>();
+    const closedPositions: ClosedPosition[] = [];
 
     for (const tx of transactions) {
       const key = tx.isin || tx.product;
@@ -209,11 +215,72 @@ export class DegiroAdapter implements IBrokerAdapter {
           currency: tx.currency,
         });
       } else if (tx.quantity < 0) {
-        // SELL: deplete open lots using FIFO
+        // SELL: deplete open lots using FIFO and generate ClosedPosition records
         let toSell = Math.abs(tx.quantity);
-        while (toSell > 0 && tracker.openLots.length > 0) {
+        const totalSellQty = toSell;
+        let matchIdx = 0;
+
+        while (toSell > 1e-6 && tracker.openLots.length > 0) {
           const oldest = tracker.openLots[0];
-          if (oldest.quantity <= toSell) {
+          const matchedQty = Math.min(oldest.quantity, toSell);
+
+          const openTime = new Date(oldest.openDateUtc).getTime();
+          const closeTime = new Date(tx.dateStr).getTime();
+          const holdingPeriodDays = Math.max(0, Math.round((closeTime - openTime) / (1000 * 86400)));
+          const isTimeTestExempt = holdingPeriodDays >= 1096;
+
+          const purchaseValNative = matchedQty * oldest.openPrice;
+          const saleValNative = matchedQty * tx.price;
+          const profitNative = saleValNative - purchaseValNative;
+          const profitPercent = purchaseValNative > 0 ? (profitNative / purchaseValNative) * 100 : 0;
+
+          const purchaseValTarget = CurrencyService.convert(purchaseValNative, oldest.currency, 'CZK');
+          const saleValTarget = CurrencyService.convert(saleValNative, tx.currency, 'CZK');
+          const profitTarget = saleValTarget - purchaseValTarget;
+          const fraction = totalSellQty > 0 ? matchedQty / totalSellQty : 1;
+          const commNative = Math.abs(tx.feeEur) * fraction;
+          const commTarget = CurrencyService.convert(commNative, 'EUR', 'CZK');
+          const estimatedTaxSavedTarget = isTimeTestExempt && profitTarget > 0 ? profitTarget * 0.15 : 0;
+
+          const rawTicker = MarketPriceService.resolveTickerFromIsin(tracker.isin, tracker.refExchange, tracker.product);
+          const normalizedTicker = MarketPriceService.normalizeTicker(rawTicker);
+          const assetClass: AssetClass = tracker.product.toLowerCase().includes('etf') || tracker.product.toLowerCase().includes('ucits')
+            ? 'ETF'
+            : tracker.product.toLowerCase().includes('gold')
+            ? 'COMMODITY'
+            : 'EQUITY';
+
+          closedPositions.push({
+            id: `degiro-${tx.orderId}-${matchIdx++}`,
+            accountId: 'Degiro-Main',
+            brokerId: 'DEGIRO',
+            rawTicker,
+            normalizedTicker,
+            name: tracker.product,
+            isin: tracker.isin,
+            assetClass,
+            instrumentCurrency: tx.currency,
+            volume: matchedQty,
+            openPrice: oldest.openPrice,
+            openDateUtc: oldest.openDateUtc,
+            closePrice: tx.price,
+            closeDateUtc: tx.dateStr,
+            holdingPeriodDays,
+            purchaseValueNative: purchaseValNative,
+            saleValueNative: saleValNative,
+            profitNative,
+            profitPercent,
+            commissionNative: commNative,
+            purchaseValueTarget: purchaseValTarget,
+            saleValueTarget: saleValTarget,
+            profitTarget,
+            commissionTarget: commTarget,
+            isTimeTestExempt,
+            estimatedTaxSavedTarget,
+            comment: `Degiro FIFO match: Order ${tx.orderId}`,
+          });
+
+          if (oldest.quantity <= toSell + 1e-6) {
             toSell -= oldest.quantity;
             tracker.openLots.shift(); // fully consumed
           } else {
@@ -273,6 +340,7 @@ export class DegiroAdapter implements IBrokerAdapter {
       },
       holdings: finalHoldings,
       lots: finalLots,
+      closedPositions,
       warnings: [],
     };
   }

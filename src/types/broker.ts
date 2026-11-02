@@ -1,10 +1,11 @@
-import { Account, AssetClass, BrokerId, CurrencyCode, Holding, PositionLot, CashLedgerTransaction } from './portfolio';
+import { Account, AssetClass, BrokerId, CurrencyCode, Holding, PositionLot, CashLedgerTransaction, ClosedPosition } from './portfolio';
+import { DividendTransaction } from './dividend';
 
 export interface FileSnapshot {
   fileName: string;
   fileExtension: string;
   sizeBytes: number;
-  data: ArrayBuffer | string;
+  data: ArrayBuffer | string | Uint8Array;
 }
 
 export interface IngestionResult {
@@ -36,6 +37,8 @@ export interface IngestionResult {
     reportedNetProfit?: number;
   }>;
   cashOperations?: CashLedgerTransaction[];
+  dividends?: DividendTransaction[];
+  closedPositions?: ClosedPosition[];
   warnings: string[];
 }
 
