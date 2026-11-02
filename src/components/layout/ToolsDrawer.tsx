@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   SlidersHorizontal,
@@ -14,8 +15,16 @@ import {
   Globe,
   Layers,
   Sparkles,
+  LayoutDashboard,
+  WalletCards,
+  BadgePercent,
+  TrendingUp,
+  PieChart,
+  Scale,
+  Landmark,
+  ChevronRight,
 } from 'lucide-react';
-import { usePreferencesStore } from '@/lib/stores/usePreferencesStore';
+import { ActiveTab, usePreferencesStore } from '@/lib/stores/usePreferencesStore';
 import { usePortfolioStore } from '@/lib/stores/usePortfolioStore';
 import { useAuthStore } from '@/lib/stores/useAuthStore';
 import { CurrencySelect } from '@/components/common/CurrencySelect';
@@ -26,6 +35,7 @@ interface ToolsDrawerProps {
   onClose: () => void;
   onOpenAuth: () => void;
   onOpenCash?: () => void;
+  onOpenRebalancer?: () => void;
 }
 
 export const ToolsDrawer: React.FC<ToolsDrawerProps> = ({
@@ -33,7 +43,10 @@ export const ToolsDrawer: React.FC<ToolsDrawerProps> = ({
   onClose,
   onOpenAuth,
   onOpenCash,
+  onOpenRebalancer,
 }) => {
+  const activeTab = usePreferencesStore((s) => s.activeTab);
+  const setActiveTab = usePreferencesStore((s) => s.setActiveTab);
   const privacyMode = usePreferencesStore((s) => s.privacyMode);
   const togglePrivacyMode = usePreferencesStore((s) => s.togglePrivacyMode);
 
@@ -50,20 +63,30 @@ export const ToolsDrawer: React.FC<ToolsDrawerProps> = ({
 
   const [isResetting, setIsResetting] = React.useState(false);
 
-  if (!open) return null;
+  // Close on Escape key
+  React.useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
+
+  if (!open || typeof document === 'undefined') return null;
 
   const isRedis = storageStatus?.type === 'redis';
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 overflow-hidden">
       {/* Backdrop */}
       <div
         onClick={onClose}
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity animate-in fade-in duration-200"
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
       />
 
       <div className="fixed inset-y-0 right-0 max-w-full flex pl-10">
-        <div className="w-screen max-w-sm sm:max-w-md bg-[#0D1117] border-l border-slate-800 shadow-2xl flex flex-col justify-between animate-in slide-in-from-right duration-300">
+        <div className="w-screen max-w-sm sm:max-w-md bg-[#0D1117] border-l border-slate-800 shadow-2xl flex flex-col justify-between">
           {/* Header */}
           <div className="p-5 border-b border-slate-800/80 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -85,6 +108,67 @@ export const ToolsDrawer: React.FC<ToolsDrawerProps> = ({
 
           {/* Drawer Body */}
           <div className="flex-1 overflow-y-auto p-5 space-y-6 scrollbar-thin">
+            {/* 0. Navigace mezi moduly a nástroji */}
+            <div className="space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 block">
+                Navigace & Nástroje
+              </span>
+              <div className="grid grid-cols-1 gap-1 bg-slate-900/40 p-1.5 rounded-2xl border border-slate-800/80">
+                {[
+                  { id: 'dashboard', label: 'Přehled & Denní změny', icon: LayoutDashboard },
+                  { id: 'holdings', label: 'Pozice a akcie', icon: Layers },
+                  { id: 'budget', label: 'Rozpočet & Mzda', icon: WalletCards },
+                  { id: 'dividends', label: 'Dividendy', icon: BadgePercent },
+                  { id: 'projection', label: 'Predikce bohatství (FIRE)', icon: TrendingUp },
+                  { id: 'breakdown', label: 'Vizuální rozpad aktiv', icon: PieChart },
+                  { id: 'clusters', label: 'Klastry & Pravidla', icon: Sparkles },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const isCurrent = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveTab(item.id as ActiveTab);
+                        onClose();
+                      }}
+                      className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                        isCurrent
+                          ? 'bg-indigo-600/20 text-indigo-300 font-semibold border border-indigo-500/30'
+                          : 'text-slate-300 hover:bg-slate-800/70'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Icon className={`w-3.5 h-3.5 ${isCurrent ? 'text-indigo-400' : 'text-slate-400'}`} />
+                        <span>{item.label}</span>
+                      </div>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Rychlé kalkulačky & akce */}
+              {onOpenRebalancer && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenRebalancer();
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-indigo-900/30 to-purple-900/30 border border-indigo-500/30 text-indigo-200 text-xs font-semibold hover:border-indigo-400 transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <Scale className="w-4 h-4 text-indigo-400" />
+                    <span>⚡ Spustit Smart DCA Rebalancer</span>
+                  </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">
+                    Otevřít
+                  </span>
+                </button>
+              )}
+            </div>
+
             {/* 1. Uživatel & Úložiště */}
             <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-3">
               <div className="flex items-center justify-between">
@@ -300,6 +384,7 @@ export const ToolsDrawer: React.FC<ToolsDrawerProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

@@ -61,7 +61,11 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0B0E14] text-slate-100 flex flex-col antialiased">
-      <Navbar onOpenImport={() => setImportOpen(true)} onOpenCash={() => setCashModalOpen(true)} />
+      <Navbar
+        onOpenImport={() => setImportOpen(true)}
+        onOpenCash={() => setCashModalOpen(true)}
+        onOpenRebalancer={() => setRebalancerOpen(true)}
+      />
       <NavigationTabs />
 
       <main className="flex-1 max-w-[1720px] 2xl:max-w-[1920px] w-full mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-6">

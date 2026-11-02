@@ -19,9 +19,10 @@ import { ToolsDrawer } from '@/components/layout/ToolsDrawer';
 interface NavbarProps {
   onOpenImport: () => void;
   onOpenCash?: () => void;
+  onOpenRebalancer?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onOpenImport, onOpenCash }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onOpenImport, onOpenCash, onOpenRebalancer }) => {
   const privacyMode = usePreferencesStore((s) => s.privacyMode);
   const togglePrivacyMode = usePreferencesStore((s) => s.togglePrivacyMode);
 
@@ -102,7 +103,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenImport, onOpenCash }) => {
           <button
             onClick={() => setToolsDrawerOpen(true)}
             title="Otevřít postranní panel nástrojů, profilů a nastavení"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/80 hover:bg-slate-800/90 hover:border-slate-700 transition-all text-xs font-semibold text-slate-200 group"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900/80 hover:bg-slate-800/90 hover:border-slate-700 transition-all text-xs font-semibold text-slate-200 group cursor-pointer"
           >
             {/* Status indicator inside button */}
             {isAuthenticated && user ? (
@@ -114,7 +115,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenImport, onOpenCash }) => {
             )}
 
             <span className="hidden md:inline">
-              {isAuthenticated && user ? user.name.split(' ')[0] : 'Nástroje'}
+              {isAuthenticated && user ? `${user.name.split(' ')[0]} • Nástroje` : 'Nástroje'}
             </span>
 
             {/* Storage indicator badge */}
@@ -137,6 +138,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenImport, onOpenCash }) => {
         onClose={() => setToolsDrawerOpen(false)}
         onOpenAuth={() => setAuthModalOpen(true)}
         onOpenCash={onOpenCash}
+        onOpenRebalancer={onOpenRebalancer}
       />
 
       {/* Auth Modal */}
