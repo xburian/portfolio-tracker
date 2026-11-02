@@ -5,7 +5,7 @@ export interface FileSnapshot {
   fileName: string;
   fileExtension: string;
   sizeBytes: number;
-  data: ArrayBuffer | string;
+  data: ArrayBuffer | string | Uint8Array;
 }
 
 export interface IngestionResult {

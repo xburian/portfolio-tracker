@@ -17,10 +17,12 @@ describe('Closed Positions Ingestion & Performance Trackers', () => {
     }
 
     const buffer = fs.readFileSync(filePath);
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     const result = await adapter.parse({
       fileName: 'XTB_USD_2235930.xlsx',
       fileExtension: '.xlsx',
-      data: new Uint8Array(buffer),
+      sizeBytes: buffer.byteLength,
+      data: arrayBuffer,
     });
 
     expect(result.closedPositions).toBeDefined();
@@ -57,10 +59,12 @@ describe('Closed Positions Ingestion & Performance Trackers', () => {
     }
 
     const buffer = fs.readFileSync(filePath);
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     const result = await adapter.parse({
       fileName: 'Degiro_EUR.xlsx',
       fileExtension: '.xlsx',
-      data: new Uint8Array(buffer),
+      sizeBytes: buffer.byteLength,
+      data: arrayBuffer,
     });
 
     expect(result.closedPositions).toBeDefined();
