@@ -310,4 +310,117 @@ describe('CzechTaxService (Czech Income Tax § 4, § 8, § 10 ZDP)', () => {
     expect(csv).toContain('Příloha č. 2 (§ 10 ZDP - Cenné papíry)');
     expect(csv).toContain('Příloha č. 3 (§ 8 ZDP - Zahraniční dividendy)');
   });
+
+  it('correctly tracks domestic Czech dividends (§ 36 ZDP) with 15% final withholding tax', () => {
+    const dividends: DividendTransaction[] = [
+      // ČEZ dividend in CZK with 15% domestic final withholding tax
+      {
+        id: 'div-cez',
+        profileId: 'prof-1',
+        accountId: 'xtb-czk',
+        brokerId: 'XTB',
+        rawTicker: 'CEZ.CZ',
+        normalizedTicker: 'CEZ',
+        isin: 'CZ0005112300',
+        currency: 'CZK',
+        grossAmount: 50000,
+        withholdingTax: 7500, // 15% domestic
+        netAmount: 42500,
+        paymentDateUtc: '2024-07-01T00:00:00Z',
+        yearMonth: '2024-07',
+        fxRateToCZK: 1.0,
+        grossAmountCZK: 50000,
+        withholdingTaxCZK: 7500,
+        netAmountCZK: 42500,
+      },
+    ];
+
+    const report = CzechTaxService.generateAnnualTaxReport([], dividends, 2024, 'GFR_UNIFORM');
+
+    // Domestic summary populated
+    expect(report.dividends.domestic.count).toBe(1);
+    expect(report.dividends.domestic.grossCZK).toBe(50000);
+    expect(report.dividends.domestic.finalWithholdingTaxPaidCZK).toBe(7500);
+
+    // NOT included in foreign country breakdown (§ 8 Schedule 3)
+    expect(report.dividends.countryBreakdown.length).toBe(0);
+    expect(report.dividends.netCzechTaxOnDividendsCZK).toBe(0);
+  });
+
+  it('correctly generates multi-broker tax breakdown across XTB, DEGIRO, and IBKR', () => {
+    const closedPositions: ClosedPosition[] = [
+      // XTB: non-exempt gain +40,000 CZK (Sale 120k, Cost 80k)
+      {
+        id: 'pos-xtb',
+        accountId: 'acc-xtb',
+        brokerId: 'XTB',
+        rawTicker: 'NVDA.US',
+        normalizedTicker: 'NVDA',
+        name: 'NVIDIA',
+        assetClass: 'EQUITY',
+        instrumentCurrency: 'CZK',
+        volume: 10,
+        openPrice: 8000,
+        openDateUtc: '2024-01-01T00:00:00Z',
+        closePrice: 12000,
+        closeDateUtc: '2024-05-01T00:00:00Z',
+        holdingPeriodDays: 121,
+        isTimeTestExempt: false,
+        purchaseValueNative: 80000,
+        saleValueNative: 120000,
+        profitNative: 40000,
+        profitPercent: 50,
+        commissionNative: 0,
+        purchaseValueTarget: 80000,
+        saleValueTarget: 120000,
+        profitTarget: 40000,
+        commissionTarget: 0,
+        estimatedTaxSavedTarget: 0,
+      },
+      // DEGIRO: non-exempt loss -15,000 CZK (Sale 35k, Cost 50k)
+      {
+        id: 'pos-deg',
+        accountId: 'acc-deg',
+        brokerId: 'DEGIRO',
+        rawTicker: 'INTC',
+        normalizedTicker: 'INTC',
+        name: 'Intel',
+        assetClass: 'EQUITY',
+        instrumentCurrency: 'CZK',
+        volume: 10,
+        openPrice: 5000,
+        openDateUtc: '2024-02-01T00:00:00Z',
+        closePrice: 3500,
+        closeDateUtc: '2024-06-01T00:00:00Z',
+        holdingPeriodDays: 121,
+        isTimeTestExempt: false,
+        purchaseValueNative: 50000,
+        saleValueNative: 35000,
+        profitNative: -15000,
+        profitPercent: -30,
+        commissionNative: 0,
+        purchaseValueTarget: 50000,
+        saleValueTarget: 35000,
+        profitTarget: -15000,
+        commissionTarget: 0,
+        estimatedTaxSavedTarget: 0,
+      },
+    ];
+
+    const report = CzechTaxService.generateAnnualTaxReport(closedPositions, [], 2024, 'GFR_UNIFORM');
+
+    // Consolidated § 10: Gross sales = 120k + 35k = 155k (> 100k)
+    // Net result = +40k - 15k = 25 000 CZK. Tax base = 25 000 CZK, Tax due = 3 750 CZK
+    expect(report.securities.netSecuritiesResultCZK).toBe(25000);
+    expect(report.securities.taxBaseSecuritiesCZK).toBe(25000);
+    expect(report.securities.estimatedTaxSecuritiesCZK).toBe(3750);
+
+    // Broker breakdown has both brokers
+    expect(report.brokers.length).toBeGreaterThanOrEqual(2);
+    const xtb = report.brokers.find((b) => b.brokerId === 'XTB');
+    const deg = report.brokers.find((b) => b.brokerId === 'DEGIRO');
+
+    expect(xtb?.sales.taxableNetResultCZK).toBe(40000);
+    expect(deg?.sales.taxableNetResultCZK).toBe(-15000);
+  });
 });

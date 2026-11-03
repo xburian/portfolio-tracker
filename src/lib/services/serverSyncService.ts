@@ -10,6 +10,7 @@ export interface StorageSyncCounts {
   rules: number;
   cashLedger: number;
   dividends: number;
+  closedPositions: number;
   salaryConfigs: number;
   expenseCategories: number;
 }
@@ -80,6 +81,7 @@ export class ServerSyncService {
         rules,
         cashLedger,
         dividends,
+        closedPositions,
         salaryConfigs,
         expenseCategories,
       ] = await Promise.all([
@@ -91,6 +93,7 @@ export class ServerSyncService {
         db.rules.toArray(),
         db.cashLedger.toArray(),
         db.dividends.toArray(),
+        db.closedPositions.toArray(),
         db.salaryConfigs.toArray(),
         db.expenseCategories.toArray(),
       ]);
@@ -105,6 +108,7 @@ export class ServerSyncService {
           rules,
           cashLedger,
           dividends,
+          closedPositions,
           salaryConfigs,
           expenseCategories,
         },
@@ -179,6 +183,7 @@ export class ServerSyncService {
         db.rules,
         db.cashLedger,
         db.dividends,
+        db.closedPositions,
         db.salaryConfigs,
         db.expenseCategories,
       ], async () => {
@@ -213,6 +218,10 @@ export class ServerSyncService {
         if (data.dividends && data.dividends.length > 0) {
           await db.dividends.clear();
           await db.dividends.bulkAdd(data.dividends);
+        }
+        if (data.closedPositions && data.closedPositions.length > 0) {
+          await db.closedPositions.clear();
+          await db.closedPositions.bulkAdd(data.closedPositions);
         }
         if (data.salaryConfigs && data.salaryConfigs.length > 0) {
           await db.salaryConfigs.clear();

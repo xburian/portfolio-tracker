@@ -20,6 +20,7 @@ import { DividendsView } from '@/components/dividends/DividendsView';
 import { ImportModal } from '@/components/import/ImportModal';
 import { CashManagerModal } from '@/components/cash/CashManagerModal';
 import { SmartDCARebalancerModal } from '@/components/rebalance/SmartDCARebalancerModal';
+import { CzechTaxAssistantView } from '@/components/tax/CzechTaxAssistantView';
 import { useBudgetStore } from '@/lib/stores/useBudgetStore';
 import { Upload, Sparkles, PieChart, ShieldCheck, RotateCcw } from 'lucide-react';
 
@@ -170,6 +171,10 @@ export const App: React.FC = () => {
 
             {activeTab === 'breakdown' && (
               <AllocationBreakdown valuations={valuations} />
+            )}
+
+            {activeTab === 'tax' && (
+              <CzechTaxAssistantView />
             )}
 
             {activeTab === 'clusters' && (
