@@ -9,10 +9,13 @@ import {
   Sparkles,
   Building2,
   Receipt,
+  ShoppingCart,
   Coins,
   TrendingDown,
+  TrendingUp,
   Layers,
   Landmark,
+  RotateCcw,
 } from 'lucide-react';
 import { usePortfolioStore } from '@/lib/stores/usePortfolioStore';
 import { useCurrencyStore } from '@/lib/stores/useCurrencyStore';
@@ -29,12 +32,14 @@ export const CzechTaxAssistantView: React.FC = () => {
   const closedPositions = usePortfolioStore((s) => s.closedPositions);
   const dividends = usePortfolioStore((s) => s.dividends);
   const accounts = usePortfolioStore((s) => s.accounts);
+  const resetAndReloadSampleFiles = usePortfolioStore((s) => s.resetAndReloadSampleFiles);
   const displayCurrency = useCurrencyStore((s) => s.displayCurrency);
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [rateMethod, setRateMethod] = useState<ExchangeRateMethod>('GFR_UNIFORM');
   const [activeSubTab, setActiveSubTab] = useState<TaxViewSubTab>('overview');
+  const [isReloading, setIsReloading] = useState<boolean>(false);
 
   const availableYears = useMemo(() => {
     const yearsSet = new Set<number>();
@@ -76,8 +81,28 @@ export const CzechTaxAssistantView: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleReloadData = async () => {
+    setIsReloading(true);
+    try {
+      await resetAndReloadSampleFiles();
+    } catch (e) {
+      console.error('Failed to reload files:', e);
+    } finally {
+      setIsReloading(false);
+    }
+  };
+
   const nonExemptSales = report.securities.nonExemptGrossSalesCZK;
   const progress100k = Math.min(100, Math.round((nonExemptSales / 100_000) * 100));
+
+  // Totals across all sales items in the selected tax year
+  const totalSalesCZK = report.securities.totalGrossSalesAllCZK;
+  const totalPurchaseCostCZK = report.salesItems.reduce((acc, i) => acc + i.purchaseCostCZK, 0);
+  const totalFeesCZK = report.salesItems.reduce((acc, i) => acc + i.feeCZK, 0);
+  const totalNetResultCZK = report.salesItems.reduce((acc, i) => acc + i.netProfitCZK, 0);
+  const returnPercent = totalPurchaseCostCZK > 0
+    ? Math.round((totalNetResultCZK / totalPurchaseCostCZK) * 1000) / 10
+    : 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -95,7 +120,7 @@ export const CzechTaxAssistantView: React.FC = () => {
               </span>
             </h4>
             <p className="text-xs text-slate-400">
-              Rozpad daňového zatížení z výpisů brokerů a daňová optimalizace
+              Přehled prodejů, nabývacích cen, zisku/ztráty a doplatku daně z výpisů brokerů
             </p>
           </div>
         </div>
@@ -159,8 +184,32 @@ export const CzechTaxAssistantView: React.FC = () => {
         </div>
       </div>
 
-      {/* 4 KPI Summary Cards */}
+      {/* 4 KPI Summary Cards: Celkový prodej, Za kolik nakoupeno, Zisk/ztráta, Doplatek FÚ */}
       <TaxMetricDeck report={report} />
+
+      {/* Empty Closed Positions Alert (with 1-click reload button) */}
+      {report.salesItems.length === 0 && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-200">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+            <div>
+              <strong>V roce {selectedYear} nebyly v lokální databázi nalezeny žádné uzavřené prodeje.</strong>
+              <p className="text-[11px] text-amber-300/80 mt-0.5">
+                Pokud jste již na brokerech (XTB, DEGIRO) v tomto roce prodávali, klikněte na tlačítko pro opětovné načtení a synchronizaci všech výpisů.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleReloadData}
+            disabled={isReloading}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition-colors shrink-0 shadow-sm"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin' : ''}`} />
+            <span>{isReloading ? 'Načítám...' : 'Znovu načíst výpisy z disku'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Sub-navigation Tabs */}
       <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900/80 border border-slate-800 w-fit text-xs font-medium">
@@ -187,7 +236,7 @@ export const CzechTaxAssistantView: React.FC = () => {
           }`}
         >
           <Sparkles className="w-4 h-4 text-emerald-400" />
-          <span>Tax-Loss Harvesting (Optimalizátor)</span>
+          <span>Tax-Loss Harvesting (Zgrupováno dle tickeru)</span>
         </button>
 
         <button
@@ -207,6 +256,85 @@ export const CzechTaxAssistantView: React.FC = () => {
       {/* Tab 1: Overview & Brokers */}
       {activeSubTab === 'overview' && (
         <div className="flex flex-col gap-6">
+          {/* Prominent Financial Balance Card: Celkový prodej, Nákup, Zisk/Ztráta */}
+          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800/90 flex flex-col gap-4 shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-indigo-400" />
+                <h4 className="text-sm font-bold text-slate-100">
+                  Finanční bilance prodejů cenných papírů v roce {selectedYear} (§ 10 a § 4 ZDP)
+                </h4>
+              </div>
+              <span className="text-xs font-mono text-slate-400">
+                Metoda výdajů: FIFO • Účetní kurz: {rateMethod === 'GFR_UNIFORM' ? 'Jednotný GFŘ' : 'Denní ČNB'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs font-mono">
+              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/70">
+                <span className="text-[10px] uppercase font-sans text-slate-400 block mb-1">
+                  Celkové hrubé příjmy (Tržby):
+                </span>
+                <span className="text-lg font-bold text-slate-100 block">
+                  {totalSalesCZK.toLocaleString('cs-CZ')} Kč
+                </span>
+                <span className="text-[11px] text-slate-500 font-sans mt-0.5 block">
+                  {report.salesItems.length} realizovaných prodejů
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/70">
+                <span className="text-[10px] uppercase font-sans text-slate-400 block mb-1">
+                  Nákupní cena dle FIFO:
+                </span>
+                <span className="text-lg font-bold text-slate-100 block">
+                  {totalPurchaseCostCZK.toLocaleString('cs-CZ')} Kč
+                </span>
+                <span className="text-[11px] text-slate-500 font-sans mt-0.5 block">
+                  Poplatky: {totalFeesCZK.toLocaleString('cs-CZ')} Kč
+                </span>
+              </div>
+
+              <div className={`p-3.5 rounded-xl border ${
+                totalNetResultCZK < 0
+                  ? 'bg-rose-950/30 border-rose-500/40'
+                  : totalNetResultCZK > 0
+                  ? 'bg-emerald-950/30 border-emerald-500/40'
+                  : 'bg-slate-950/70 border-slate-800/70'
+              }`}>
+                <span className="text-[10px] uppercase font-sans text-slate-400 block mb-1">
+                  Celkový zisk / ztráta:
+                </span>
+                <span className={`text-lg font-bold block ${
+                  totalNetResultCZK < 0 ? 'text-rose-400' : totalNetResultCZK > 0 ? 'text-emerald-400' : 'text-slate-200'
+                }`}>
+                  {totalNetResultCZK > 0 ? '+' : ''}{totalNetResultCZK.toLocaleString('cs-CZ')} Kč
+                </span>
+                <span className={`text-[11px] font-sans font-semibold mt-0.5 block ${
+                  totalNetResultCZK < 0 ? 'text-rose-300' : 'text-emerald-300'
+                }`}>
+                  {totalNetResultCZK < 0 ? 'Realizována čistá ztráta' : 'Realizován čistý zisk'} ({returnPercent} %)
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/70">
+                <span className="text-[10px] uppercase font-sans text-slate-400 block mb-1">
+                  Dílčí základ daně (§ 10 ZDP):
+                </span>
+                <span className="text-lg font-bold text-amber-400 block">
+                  {report.securities.taxBaseSecuritiesCZK.toLocaleString('cs-CZ')} Kč
+                </span>
+                <span className="text-[11px] text-slate-500 font-sans mt-0.5 block">
+                  {report.securities.taxBaseSecuritiesCZK === 0
+                    ? totalNetResultCZK < 0
+                      ? 'Ztráta – daň 0 Kč (nelze jít pod 0)'
+                      : 'Osvobozeno – daň 0 Kč'
+                    : `Daň 15 %: ${report.securities.estimatedTaxSecuritiesCZK.toLocaleString('cs-CZ')} Kč`}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* 100 000 CZK Exemption Radar Banner */}
           <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800/90 flex flex-col gap-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -388,7 +516,7 @@ export const CzechTaxAssistantView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 2: Tax-Loss Harvesting Optimizer */}
+      {/* Tab 2: Tax-Loss Harvesting Optimizer (Grouped by Ticker) */}
       {activeSubTab === 'optimizer' && (
         <TaxLossOptimizerPanel report={report} />
       )}
@@ -410,11 +538,17 @@ export const CzechTaxAssistantView: React.FC = () => {
             <div className="flex items-center gap-4 text-xs font-mono text-slate-300">
               <div>
                 <span className="text-slate-500 block text-[10px]">HRUBÉ PŘÍJMY:</span>
-                <span className="font-bold">{report.securities.taxableGrossRevenueCZK.toLocaleString('cs-CZ')} Kč</span>
+                <span className="font-bold">{totalSalesCZK.toLocaleString('cs-CZ')} Kč</span>
               </div>
               <div>
                 <span className="text-slate-500 block text-[10px]">VÝDAJE (FIFO + POPLATKY):</span>
-                <span className="font-bold">{(report.securities.deductiblePurchaseCostsCZK + report.securities.deductibleFeesCZK).toLocaleString('cs-CZ')} Kč</span>
+                <span className="font-bold">{(totalPurchaseCostCZK + totalFeesCZK).toLocaleString('cs-CZ')} Kč</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block text-[10px]">VÝSLEDEK (ZISK/ZTRÁTA):</span>
+                <span className={`font-bold ${totalNetResultCZK >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {totalNetResultCZK > 0 ? '+' : ''}{totalNetResultCZK.toLocaleString('cs-CZ')} Kč
+                </span>
               </div>
               <div>
                 <span className="text-slate-500 block text-[10px]">DÍLČÍ ZÁKLAD DANĚ:</span>
@@ -434,14 +568,25 @@ export const CzechTaxAssistantView: React.FC = () => {
                   <th className="py-2.5 px-2 text-right">Prodej (Příjem)</th>
                   <th className="py-2.5 px-2 text-right">Nákup (Výdaj)</th>
                   <th className="py-2.5 px-2 text-right">Poplatek</th>
-                  <th className="py-2.5 px-3 text-right">Čistý zisk</th>
+                  <th className="py-2.5 px-3 text-right">Čistý zisk/ztráta</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
                 {report.salesItems.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-500 font-sans">
-                      V roce {selectedYear} nebyly evidovány žádné uzavřené prodeje cenných papírů.
+                    <td colSpan={8} className="py-8 text-center text-slate-500 font-sans">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <span>V roce {selectedYear} nebyly evidovány žádné uzavřené prodeje cenných papírů.</span>
+                        <button
+                          type="button"
+                          onClick={handleReloadData}
+                          disabled={isReloading}
+                          className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                        >
+                          <RotateCcw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin' : ''}`} />
+                          <span>Znovu načíst výpisy z disku</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -480,10 +625,10 @@ export const CzechTaxAssistantView: React.FC = () => {
                         <td className="py-2 px-2 text-right text-slate-200 font-semibold">
                           {item.grossSaleCZK.toLocaleString('cs-CZ')} Kč
                         </td>
-                        <td className="py-2 px-2 text-right text-slate-400">
+                        <td className="py-2 px-2 text-right text-slate-300">
                           {item.purchaseCostCZK.toLocaleString('cs-CZ')} Kč
                         </td>
-                        <td className="py-2 px-2 text-right text-slate-500">
+                        <td className="py-2 px-2 text-right text-slate-400">
                           {item.feeCZK.toLocaleString('cs-CZ')} Kč
                         </td>
                         <td className="py-2 px-3 text-right">
@@ -500,14 +645,6 @@ export const CzechTaxAssistantView: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Legal & Educational Disclaimer */}
-      <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-900/30 p-3.5 rounded-xl border border-slate-800/60">
-        <Info className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-        <span className="leading-relaxed">
-          Tento modul slouží jako analytický podklad pro daňové přiznání FO dle zákona č. 586/1992 Sb. a metodických pokynů GFŘ. Tuzemské dividendy jsou zdaněny 15% konečnou srážkovou daní plátcem v ČR a do přiznání nevstupují. Tax-Loss Harvesting simulátor pomáhá modelovat legální snížení daňového základu § 10 prodejem ztrátových pozic držených &lt; 3 roky. V případě nejasností konzultujte certifikovaného daňového poradce.
-        </span>
-      </div>
     </div>
   );
 };

@@ -441,4 +441,43 @@ describe('TaxLossHarvestingService (Czech Tax Optimization & Safety Guards)', ()
     expect(upcoming[0].unrealizedGainCZK).toBeGreaterThan(0);
     expect(upcoming[0].taxProtectionValueCZK).toBe(Math.round(upcoming[0].unrealizedGainCZK * 0.15));
   });
+
+  it('correctly groups multiple lots by ticker and performs HIFO simulation', () => {
+    // Two INTC loss lots with different prices
+    const lots: PositionLot[] = [
+      {
+        id: 'lot-intc-1',
+        accountId: 'xtb-1',
+        holdingId: 'h-intc',
+        ticketId: 't1',
+        type: 'BUY',
+        quantity: 40,
+        openPrice: 40.0, // Loss of (22 - 40) = -18
+        openDateUtc: new Date(refDate.getTime() - 200 * 86_400_000).toISOString(),
+        instrumentCurrency: 'USD',
+      },
+      {
+        id: 'lot-intc-2',
+        accountId: 'xtb-1',
+        holdingId: 'h-intc',
+        ticketId: 't2',
+        type: 'BUY',
+        quantity: 60,
+        openPrice: 60.0, // Bigger loss of (22 - 60) = -38 (Higher loss density)
+        openDateUtc: new Date(refDate.getTime() - 400 * 86_400_000).toISOString(),
+        instrumentCurrency: 'USD',
+      },
+    ];
+
+    const candidates = TaxLossHarvestingService.findCandidates(holdings, lots, accounts, 'CZK', refDate);
+    expect(candidates.length).toBe(2);
+
+    const grouped = TaxLossHarvestingService.groupCandidatesByTicker(candidates);
+    expect(grouped.length).toBe(1);
+    expect(grouped[0].symbol).toBe('INTC.US');
+    expect(grouped[0].lotsCount).toBe(2);
+    expect(grouped[0].totalLossQuantity).toBe(100);
+    expect(grouped[0].lots[0].openPriceNative).toBe(60); // HIFO: 60 is first!
+    expect(grouped[0].lots[1].openPriceNative).toBe(40);
+  });
 });

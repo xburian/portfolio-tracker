@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import {
   Building2,
-  TrendingUp,
-  TrendingDown,
-  BadgePercent,
-  CheckCircle,
-  AlertTriangle,
   ChevronDown,
   ChevronUp,
-  Landmark,
-  ShieldCheck,
+  Receipt,
+  BadgePercent,
+  TrendingUp,
+  TrendingDown,
+  CheckCircle2,
+  AlertCircle,
+  HelpCircle,
+  Scale,
+  ShoppingCart,
 } from 'lucide-react';
-import { BrokerTaxBreakdown } from '@/types/tax';
 import { BrokerId } from '@/types/portfolio';
+import { BrokerTaxBreakdown } from '@/types/tax';
 import { MoneyDisplay } from '@/components/common/MoneyDisplay';
 
 interface BrokerTaxBreakdownGridProps {
@@ -20,15 +22,23 @@ interface BrokerTaxBreakdownGridProps {
   isGlobalUnder100kLimit: boolean;
 }
 
-const getBrokerConfig = (brokerId: BrokerId) => {
+interface BrokerConfig {
+  brandName: string;
+  badgeBg: string;
+  borderColor: string;
+  glowColor: string;
+  dotColor: string;
+}
+
+const getBrokerConfig = (brokerId: BrokerId): BrokerConfig => {
   switch (brokerId) {
     case 'XTB':
       return {
         brandName: 'XTB (xStation)',
-        badgeBg: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-        borderColor: 'border-amber-500/30',
-        glowColor: 'shadow-amber-500/5',
-        dotColor: 'bg-amber-400',
+        badgeBg: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+        borderColor: 'border-emerald-500/30',
+        glowColor: 'shadow-emerald-500/5',
+        dotColor: 'bg-emerald-400',
       };
     case 'DEGIRO':
       return {
@@ -85,7 +95,7 @@ export const BrokerTaxBreakdownGrid: React.FC<BrokerTaxBreakdownGridProps> = ({
         <div className="flex items-center gap-2">
           <Building2 className="w-4 h-4 text-indigo-400" />
           <h4 className="text-sm font-bold text-slate-100">
-            Rozpad daňového zatížení podle brokerů
+            Rozpad prodejů a daní podle brokerů
           </h4>
         </div>
         <span className="text-[11px] text-slate-400 font-mono">
@@ -97,11 +107,11 @@ export const BrokerTaxBreakdownGrid: React.FC<BrokerTaxBreakdownGridProps> = ({
         {brokers.map((broker) => {
           const cfg = getBrokerConfig(broker.brokerId);
           const isExpanded = expandedBroker === broker.accountId;
-          const hasActivity =
-            broker.sales.taxableTradesCount > 0 ||
-            broker.sales.exemptTradesCount > 0 ||
-            broker.dividends.foreignGrossCZK > 0 ||
-            broker.dividends.domesticGrossCZK > 0;
+          
+          const totalBrokerSales = broker.sales.taxableProceedsCZK + broker.sales.exemptProceedsCZK;
+          const totalBrokerCost = broker.sales.taxableAcquisitionCostCZK + broker.sales.exemptAcquisitionCostCZK + broker.sales.taxableCommissionsCZK;
+          const totalBrokerGain = broker.sales.taxableNetResultCZK + broker.sales.exemptRealizedGainCZK;
+          const totalTrades = broker.sales.taxableTradesCount + broker.sales.exemptTradesCount;
 
           const sec10Tax = isGlobalUnder100kLimit
             ? 0
@@ -137,53 +147,63 @@ export const BrokerTaxBreakdownGrid: React.FC<BrokerTaxBreakdownGridProps> = ({
                   <div className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">
                     Doplatek FÚ
                   </div>
-                  <div className="text-base font-extrabold font-mono text-slate-100">
+                  <div className={`text-base font-extrabold font-mono ${totalTax > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
                     <MoneyDisplay amount={totalTax} currency="CZK" />
                   </div>
                 </div>
               </div>
 
-              {/* Quick Status Chips */}
-              <div className="grid grid-cols-2 gap-2 my-3.5 pt-3 border-t border-slate-800/80">
-                {/* § 10 Prodeje cenných papírů */}
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/60">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                    <span className="font-semibold">§ 10 Prodeje ({broker.sales.taxableTradesCount + broker.sales.exemptTradesCount})</span>
-                    <TrendingUp className="w-3 h-3 text-slate-500" />
-                  </div>
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[11px] text-slate-400">Výsledek:</span>
-                    <span className={`text-xs font-mono font-bold ${
-                      broker.sales.taxableNetResultCZK >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                    }`}>
-                      {broker.sales.taxableNetResultCZK > 0 ? '+' : ''}
-                      {broker.sales.taxableNetResultCZK.toLocaleString('cs-CZ')} Kč
-                    </span>
-                  </div>
+              {/* Financial Sales Summary: Prodej, Nákup, Zisk/Ztráta */}
+              <div className="grid grid-cols-3 gap-2 my-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80 text-xs font-mono">
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase block font-sans">Prodej:</span>
+                  <span className="font-bold text-slate-200">
+                    {totalBrokerSales.toLocaleString('cs-CZ')} Kč
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">
+                    {totalTrades} {totalTrades === 1 ? 'obchod' : 'obchodů'}
+                  </span>
                 </div>
 
-                {/* § 8 Dividendy */}
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/60">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                    <span className="font-semibold">§ 8 Dividendy</span>
-                    <BadgePercent className="w-3 h-3 text-slate-500" />
-                  </div>
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[11px] text-slate-400">Hrubé:</span>
-                    <span className="text-xs font-mono font-bold text-slate-200">
-                      {(broker.dividends.foreignGrossCZK + broker.dividends.domesticGrossCZK).toLocaleString('cs-CZ')} Kč
-                    </span>
-                  </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase block font-sans">Nákup (FIFO):</span>
+                  <span className="font-bold text-slate-200">
+                    {totalBrokerCost.toLocaleString('cs-CZ')} Kč
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">
+                    vč. poplatků
+                  </span>
                 </div>
+
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-500 uppercase block font-sans">Zisk / Ztráta:</span>
+                  <span className={`font-bold ${totalBrokerGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {totalBrokerGain > 0 ? '+' : ''}{totalBrokerGain.toLocaleString('cs-CZ')} Kč
+                  </span>
+                  <span className="text-[10px] text-slate-500 block font-sans">
+                    {totalBrokerGain < 0 ? 'Ztráta' : 'Zisk'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Dividendy banner */}
+              <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2 px-1">
+                <span>Hrubé dividendy (zahraniční + CZ):</span>
+                <span className="font-mono text-slate-300 font-semibold">
+                  {(broker.dividends.foreignGrossCZK + broker.dividends.domesticGrossCZK).toLocaleString('cs-CZ')} Kč
+                  {broker.dividends.czechTaxDueCZK > 0 && (
+                    <span className="text-amber-400 ml-1">(doplatek {broker.dividends.czechTaxDueCZK} Kč)</span>
+                  )}
+                </span>
               </div>
 
               {/* Expand Toggle */}
               <button
                 type="button"
                 onClick={() => setExpandedBroker(isExpanded ? null : broker.accountId)}
-                className="flex items-center justify-between w-full py-1.5 px-2 rounded-lg bg-slate-800/50 hover:bg-slate-800 text-[11px] text-slate-300 transition-colors"
+                className="flex items-center justify-between w-full py-1.5 px-2.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 text-[11px] text-slate-300 transition-colors"
               >
-                <span>{isExpanded ? 'Skrýt podrobný rozpis' : 'Zobrazit daňové položky'}</span>
+                <span>{isExpanded ? 'Skrýt podrobný rozpis' : 'Zobrazit daňové položky (§ 10, § 8, § 36)'}</span>
                 {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
               </button>
 
@@ -200,47 +220,79 @@ export const BrokerTaxBreakdownGrid: React.FC<BrokerTaxBreakdownGridProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Zdanitelné příjmy (tržby):</span>
-                      <span className="font-mono text-slate-200">{broker.sales.taxableProceedsCZK.toLocaleString('cs-CZ')} Kč</span>
-                    </div>
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Výdaje (FIFO nabývací cena):</span>
-                      <span className="font-mono text-slate-200">{(broker.sales.taxableAcquisitionCostCZK + broker.sales.taxableCommissionsCZK).toLocaleString('cs-CZ')} Kč</span>
-                    </div>
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Osvobozeno 3letým testem:</span>
-                      <span className="font-mono text-emerald-400 font-semibold">+{broker.sales.exemptRealizedGainCZK.toLocaleString('cs-CZ')} Kč</span>
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono text-slate-400">
+                      <div>Neosvobozené tržby:</div>
+                      <div className="text-right text-slate-200">
+                        {broker.sales.taxableProceedsCZK.toLocaleString('cs-CZ')} Kč
+                      </div>
+
+                      <div>Nabývací výdaje + poplatky:</div>
+                      <div className="text-right text-slate-200">
+                        {(broker.sales.taxableAcquisitionCostCZK + broker.sales.taxableCommissionsCZK).toLocaleString('cs-CZ')} Kč
+                      </div>
+
+                      <div>Neosvobozený zisk/ztráta:</div>
+                      <div className={`text-right font-bold ${
+                        broker.sales.taxableNetResultCZK >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}>
+                        {broker.sales.taxableNetResultCZK > 0 ? '+' : ''}
+                        {broker.sales.taxableNetResultCZK.toLocaleString('cs-CZ')} Kč
+                      </div>
+
+                      {broker.sales.exemptProceedsCZK > 0 && (
+                        <>
+                          <div className="text-emerald-400/90">Osvobozeno (3letý test):</div>
+                          <div className="text-right text-emerald-400 font-bold">
+                            {broker.sales.exemptProceedsCZK.toLocaleString('cs-CZ')} Kč
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
                   {/* Dividends Detail */}
                   <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/60 space-y-1.5">
                     <div className="font-semibold text-slate-300 text-[11px]">
-                      Dividendy a srážky (§ 8 & § 36 ZDP)
+                      Dividendy (§ 8 a § 36 ZDP)
                     </div>
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Zahraniční hrubé:</span>
-                      <span className="font-mono text-slate-200">{broker.dividends.foreignGrossCZK.toLocaleString('cs-CZ')} Kč</span>
-                    </div>
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Sraženo v zahraničí:</span>
-                      <span className="font-mono text-slate-300">{broker.dividends.foreignWithholdingTaxPaidCZK.toLocaleString('cs-CZ')} Kč</span>
-                    </div>
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Uplatněný zápočet DTT:</span>
-                      <span className="font-mono text-emerald-400">-{broker.dividends.foreignAllowableCreditCZK.toLocaleString('cs-CZ')} Kč</span>
-                    </div>
-                    <div className="flex justify-between text-slate-400 text-[11px]">
-                      <span>Doplatek FÚ za dividendy:</span>
-                      <span className="font-mono font-bold text-amber-400">{broker.dividends.czechTaxDueCZK.toLocaleString('cs-CZ')} Kč</span>
-                    </div>
-                    {broker.dividends.domesticGrossCZK > 0 && (
-                      <div className="flex justify-between text-slate-400 text-[11px] pt-1 border-t border-slate-800/60">
-                        <span>Tuzemské dividendy (§ 36):</span>
-                        <span className="font-mono text-slate-300">{broker.dividends.domesticGrossCZK.toLocaleString('cs-CZ')} Kč (15 % sraženo)</span>
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono text-slate-400">
+                      <div>Zahraniční hrubé:</div>
+                      <div className="text-right text-slate-200">
+                        {broker.dividends.foreignGrossCZK.toLocaleString('cs-CZ')} Kč
                       </div>
-                    )}
+
+                      <div>Sraženo v zahraničí:</div>
+                      <div className="text-right text-slate-300">
+                        {broker.dividends.foreignWithholdingTaxPaidCZK.toLocaleString('cs-CZ')} Kč
+                      </div>
+
+                      <div>Uplatnitelný zápočet SZDZ:</div>
+                      <div className="text-right text-emerald-400">
+                        {broker.dividends.foreignAllowableCreditCZK.toLocaleString('cs-CZ')} Kč
+                      </div>
+
+                      <div>Doplatek v ČR (§ 8):</div>
+                      <div className={`text-right font-bold ${
+                        broker.dividends.czechTaxDueCZK > 0 ? 'text-amber-400' : 'text-emerald-400'
+                      }`}>
+                        {broker.dividends.czechTaxDueCZK} Kč
+                      </div>
+
+                      {broker.dividends.domesticGrossCZK > 0 && (
+                        <>
+                          <div className="text-slate-400">Tuzemské dividendy (§ 36):</div>
+                          <div className="text-right text-slate-200">
+                            {broker.dividends.domesticGrossCZK.toLocaleString('cs-CZ')} Kč
+                          </div>
+                          <div className="text-slate-500">Sraženo v ČR (15 %):</div>
+                          <div className="text-right text-slate-400">
+                            {broker.dividends.domesticWithholdingTaxCZK.toLocaleString('cs-CZ')} Kč
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

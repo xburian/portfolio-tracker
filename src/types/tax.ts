@@ -189,6 +189,38 @@ export interface TaxLossCandidate {
   suggestedSubstitute?: EtfSubstituteSuggestion;
 }
 
+export interface GroupedTaxLossCandidate {
+  id: string; // e.g. "grouped-SXR8.DE"
+  symbol: string;
+  normalizedTicker: string;
+  name: string;
+  isin?: string;
+  brokerId: BrokerId;
+  brokerNames: string[];
+  accountNames: string[];
+  instrumentCurrency: CurrencyCode;
+  
+  // Aggregated quantities & metrics
+  lotsCount: number;
+  totalLossQuantity: number;
+  averageOpenPriceNative: number;
+  currentPriceNative: number;
+  totalCostBasisCZK: number;
+  totalCurrentMarketValueCZK: number;
+  totalUnrealizedLossCZK: number; // negative number e.g. -45 000
+  potentialTaxSavingsCZK: number; // Math.abs(totalUnrealizedLossCZK) * 0.15
+  lossDensity: number; // Math.abs(totalUnrealizedLossCZK) / totalCurrentMarketValueCZK
+  lossPercent: number; // percentage loss from average acquisition cost
+  
+  // Holding period ranges
+  oldestHoldingDays: number;
+  newestHoldingDays: number;
+  minDaysToTimeTest: number;
+  
+  suggestedSubstitute?: EtfSubstituteSuggestion;
+  lots: TaxLossCandidate[];
+}
+
 export interface TaxHarvestSimulationItem {
   candidate: TaxLossCandidate;
   harvestQuantity: number;

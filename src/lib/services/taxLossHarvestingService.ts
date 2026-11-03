@@ -2,6 +2,7 @@ import { Account, BrokerId, CurrencyCode, Holding, PositionLot } from '@/types/p
 import {
   AnnualTaxReport,
   EtfSubstituteSuggestion,
+  GroupedTaxLossCandidate,
   TaxHarvestSimulationItem,
   TaxHarvestSimulationResult,
   TaxLossCandidate,
@@ -179,6 +180,123 @@ export class TaxLossHarvestingService {
 
     // Sort by Loss Density descending (quant-optimal: maximum loss per crown of gross proceeds)
     return candidates.sort((a, b) => b.lossDensity - a.lossDensity);
+  }
+
+  /**
+   * Groups individual loss candidate lots by Ticker/Symbol.
+   * Eliminates repetitive individual lot rows and gives a clean, institutional macro-view.
+   */
+  public static groupCandidatesByTicker(candidates: TaxLossCandidate[]): GroupedTaxLossCandidate[] {
+    const groupMap = new Map<string, GroupedTaxLossCandidate>();
+
+    for (const c of candidates) {
+      const key = (c.symbol || '').toUpperCase().trim();
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          id: `grouped-${key}`,
+          symbol: c.symbol,
+          normalizedTicker: c.symbol.split('.')[0],
+          name: c.name,
+          isin: c.isin,
+          brokerId: c.brokerId,
+          brokerNames: [c.brokerId],
+          accountNames: [c.accountName],
+          instrumentCurrency: c.instrumentCurrency,
+          lotsCount: 0,
+          totalLossQuantity: 0,
+          averageOpenPriceNative: 0,
+          currentPriceNative: c.currentPriceNative,
+          totalCostBasisCZK: 0,
+          totalCurrentMarketValueCZK: 0,
+          totalUnrealizedLossCZK: 0,
+          potentialTaxSavingsCZK: 0,
+          lossDensity: 0,
+          lossPercent: 0,
+          oldestHoldingDays: 0,
+          newestHoldingDays: Infinity,
+          minDaysToTimeTest: Infinity,
+          suggestedSubstitute: c.suggestedSubstitute,
+          lots: [],
+        });
+      }
+
+      const g = groupMap.get(key)!;
+      g.lots.push(c);
+      g.lotsCount++;
+      g.totalLossQuantity += c.quantity;
+      g.totalCostBasisCZK += c.costBasisCZK;
+      g.totalCurrentMarketValueCZK += c.currentMarketValueCZK;
+      g.totalUnrealizedLossCZK += c.unrealizedLossCZK;
+      g.oldestHoldingDays = Math.max(g.oldestHoldingDays, c.holdingDays);
+      g.newestHoldingDays = Math.min(g.newestHoldingDays, c.holdingDays);
+      g.minDaysToTimeTest = Math.min(g.minDaysToTimeTest, c.daysToTimeTest);
+
+      if (!g.brokerNames.includes(c.brokerId)) {
+        g.brokerNames.push(c.brokerId);
+      }
+      if (!g.accountNames.includes(c.accountName)) {
+        g.accountNames.push(c.accountName);
+      }
+    }
+
+    // Finalize weighted averages and densities for each group
+    const result: GroupedTaxLossCandidate[] = [];
+    for (const g of groupMap.values()) {
+      if (g.totalLossQuantity > 0) {
+        // Sort lots inside group by loss density descending (HIFO priority)
+        g.lots.sort((a, b) => b.lossDensity - a.lossDensity);
+
+        const totalCostNative = g.lots.reduce((acc, l) => acc + l.quantity * l.openPriceNative, 0);
+        g.averageOpenPriceNative = Math.round((totalCostNative / g.totalLossQuantity) * 10000) / 10000;
+        g.totalCostBasisCZK = Math.round(g.totalCostBasisCZK);
+        g.totalCurrentMarketValueCZK = Math.round(g.totalCurrentMarketValueCZK);
+        g.totalUnrealizedLossCZK = Math.round(g.totalUnrealizedLossCZK);
+        g.potentialTaxSavingsCZK = Math.round(Math.abs(g.totalUnrealizedLossCZK) * 0.15);
+
+        const absLoss = Math.abs(g.totalUnrealizedLossCZK);
+        g.lossDensity = Math.round((absLoss / Math.max(1, g.totalCurrentMarketValueCZK)) * 1000) / 1000;
+
+        if (g.averageOpenPriceNative > 0) {
+          g.lossPercent = Math.round(((g.currentPriceNative - g.averageOpenPriceNative) / g.averageOpenPriceNative) * 10000) / 100;
+        }
+
+        if (g.newestHoldingDays === Infinity) g.newestHoldingDays = 0;
+        if (g.minDaysToTimeTest === Infinity) g.minDaysToTimeTest = 0;
+
+        result.push(g);
+      }
+    }
+
+    // Sort groups by quant loss density descending
+    return result.sort((a, b) => b.lossDensity - a.lossDensity);
+  }
+
+  /**
+   * Simulates harvest for grouped ticker selections using HIFO lot allocation.
+   */
+  public static simulateHarvestGrouped(
+    currentReport: AnnualTaxReport,
+    groupedSelections: Array<{ candidate: GroupedTaxLossCandidate; harvestQuantity: number }>
+  ): TaxHarvestSimulationResult {
+    const lotSelections: Array<{ candidate: TaxLossCandidate; harvestQuantity: number }> = [];
+
+    for (const sel of groupedSelections) {
+      if (sel.harvestQuantity <= 0.000001) continue;
+
+      let remainingToHarvest = Math.min(sel.candidate.totalLossQuantity, sel.harvestQuantity);
+      // Allocate across lots in HIFO order (lots are pre-sorted by loss density descending)
+      for (const lot of sel.candidate.lots) {
+        if (remainingToHarvest <= 0) break;
+        const take = Math.min(lot.quantity, remainingToHarvest);
+        lotSelections.push({
+          candidate: lot,
+          harvestQuantity: take,
+        });
+        remainingToHarvest -= take;
+      }
+    }
+
+    return this.simulateHarvest(currentReport, lotSelections);
   }
 
   /**
