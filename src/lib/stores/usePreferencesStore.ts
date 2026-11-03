@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type ActiveTab = 'dashboard' | 'holdings' | 'budget' | 'dividends' | 'projection' | 'breakdown' | 'clusters';
+export type ActiveTab = 'dashboard' | 'holdings' | 'budget' | 'dividends' | 'projection' | 'breakdown' | 'clusters' | 'tax';
 
 interface PreferencesState {
   privacyMode: boolean;

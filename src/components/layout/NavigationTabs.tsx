@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Wrench,
   Check,
+  Scale,
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ActiveTab, usePreferencesStore } from '@/lib/stores/usePreferencesStore';
@@ -37,6 +38,12 @@ export const NavigationTabs: React.FC = () => {
       label: 'Vizuální rozpad',
       description: 'Koláčový rozpad tříd aktiv a 3letý daňový test (§ 4 ZDP)',
       icon: PieChart,
+    },
+    {
+      id: 'tax',
+      label: 'Daně & Optimalizace',
+      description: 'Rozpad dle výpisů brokerů, DPFO (§ 8, § 10) a Tax-Loss Harvesting',
+      icon: Scale,
     },
     {
       id: 'clusters',

@@ -4,7 +4,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19.0-61dafb.svg)](https://react.dev/)
 [![Bun](https://img.shields.io/badge/Bun-v1.4-fbf0df.svg)](https://bun.sh/)
-[![Tests](https://img.shields.io/badge/Tests-108%20passed%20(2017%20assertions)-emerald.svg)](https://github.com/xburian/portfolio-tracker)
+[![Tests](https://img.shields.io/badge/Tests-117%20passed%20(2068%20assertions)-emerald.svg)](https://github.com/xburian/portfolio-tracker)
 
 A comprehensive, institutional-grade personal wealth and investment management platform engineered specifically for retail investors and individuals pursuing **Financial Independence, Retire Early (FIRE)** in the Czech Republic and the European Union.
 
@@ -14,7 +14,18 @@ Portfolio Tracker aggregates multi-broker statements (**XTB**, **DEGIRO**, **Int
 
 ## 🌟 Key Features & Modules
 
-### 1. 🏛️ Czech Tax Assistant & Exemption Radar (§ 4, § 8, § 10, § 38v ZDP)
+### 1. 🏛️ Czech Tax Assistant, Broker Breakdown & Tax-Loss Optimizer (§ 4, § 8, § 10, § 36, § 38v ZDP)
+- **Broker-Level Tax Liability Breakdown:**
+  - Independent breakdown of tax liability per broker (**XTB**, **DEGIRO**, **Interactive Brokers**, **Portu**).
+  - Explicit multi-broker calculation separating securities sales (§ 10 ZDP) from foreign dividend income (§ 8 ZDP).
+  - **Domestic Czech Dividends (§ 36 ZDP):** Automatic segregation of Czech dividend payouts (e.g., ČEZ, Moneta, Komerční banka, Colt CZ) taxed via final 15% withholding tax at source, requiring zero additional tax filing.
+- **Tax-Loss Harvesting Engine & Optimization Simulator:**
+  - **Eligible Loss Scanner:** Scans unrealized loss lots held $< 1096$ days (under the 3-year time test) eligible to offset realized § 10 taxable gains. Strictly excludes lots held $\ge 3$ years (daňově neuznatelná ztráta dle § 4(1)(w) a § 5(2) ZDP).
+  - **Quant Loss Density Ranking ($\rho_k = \frac{|\text{Loss}|}{\text{Market Value}}$):** Prioritizes positions that unlock the maximum tax loss per crown of gross proceeds liquidated.
+  - **The 100k Cliff Paradox Protection:** Live algorithmic check warning when selling an open loss lot would push calendar-year gross sales above 100 000 CZK (§ 4(1)(v) ZDP), destroying an otherwise tax-free year.
+  - **Saturation Cap & Waste Prevention:** Warns against harvesting losses exceeding current-year taxable capital gains (since § 10 losses cannot offset salary § 6 or carry forward to future years in the Czech Republic).
+  - **Abuse of Rights & UCITS ETF Substitutes (§ 8(4) Daňový řád):** Recommends non-identical benchmark substitutes (e.g., `SXR8` $\leftrightarrow$ `VUAA`, `VWCE` $\leftrightarrow$ `ISAC`, `SWDA` $\leftrightarrow$ `VWCE`) with economic rationale documentation to prevent wash-sale tax authority scrutiny while maintaining full market exposure.
+  - **Upcoming 3-Year Exemption Radar:** Early warning indicator flagging winning positions within 60 days of achieving 100% tax exemption (§ 4(1)(w) ZDP).
 - **100 000 CZK Gross Sales Exemption Radar (§ 4(1)(v) ZDP):**
   - Live progress meter tracking total gross revenue from non-exempt securities sales within the calendar year.
   - Highlights tax-free status when under 100 000 CZK, with instant alerts if approaching or crossing the cliff threshold into taxable territory.
@@ -26,7 +37,7 @@ Portfolio Tracker aggregates multi-broker statements (**XTB**, **DEGIRO**, **Int
   - Strict 0 CZK floor enforcement (capital losses on securities cannot offset employment salary or carry forward).
 - **Foreign Dividend Withholding Tax Credit (§ 8 ZDP / Příloha č. 3):**
   - Country-by-country breakdown of gross dividends and foreign withholding tax paid.
-  - Applies Double Taxation Treaties (DTT / SZDZ, e.g., 15% rate under US W-8BEN) with simple credit method calculation (*metoda prostého zápočtu*).
+  - Applies Double Taxation Treaties (DTT / SZDZ, e.g., 15% rate under US W-8BEN, Ireland 0%, Germany 26.375% capped at 15%) with simple credit method calculation (*metoda prostého zápočtu*).
 - **Exchange Rate Modes & CSV Export:**
   - One-click toggle between **Pokyn GFŘ Uniform Annual Rates** (official roční jednotné kurzy) and **ČNB Daily Exchange Rates**.
   - Downloadable CSV tax report structured directly for tax advisors and statutory filing.
@@ -123,7 +134,7 @@ Portfolio Tracker aggregates multi-broker statements (**XTB**, **DEGIRO**, **Int
 | **State Management** | [Zustand](https://zustand.docs.pmnd.rs/) with localStorage persistence |
 | **Client Storage** | [Dexie.js](https://dexie.org/) (IndexedDB) with memory compaction |
 | **Auth & Server Storage**| [jose](https://github.com/panva/jose) (JWT Access/Refresh tokens) + In-Memory / [Redis](https://ioredis.readthedocs.io/) |
-| **Testing** | [Vitest](https://vitest.dev/) & Bun Test (108 unit & integration tests) |
+| **Testing** | [Vitest](https://vitest.dev/) & Bun Test (117 unit & integration tests) |
 
 ---
 
@@ -158,7 +169,7 @@ Open your browser at `http://localhost:3000`.
 The project enforces strict type-safety and 100% test coverage of all mathematical, algorithmic, and tax rules:
 
 ```bash
-# 1. Run all unit and integration tests (108 tests)
+# 1. Run all unit and integration tests (117 tests, 2068 assertions)
 bun test
 
 # 2. Strict TypeScript typecheck (zero warnings/errors)

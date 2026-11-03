@@ -1,10 +1,12 @@
-import { ClosedPosition, CurrencyCode } from '@/types/portfolio';
+import { ClosedPosition, CurrencyCode, Account, BrokerId } from '@/types/portfolio';
 import { DividendTransaction } from '@/types/dividend';
 import {
   AnnualTaxReport,
   ExchangeRateMethod,
   TaxDividendCountrySummary,
   TaxDividendsSummary,
+  DomesticDividendSummary,
+  BrokerTaxBreakdown,
   TaxSecuritiesSaleItem,
   TaxSecuritiesSummary,
 } from '@/types/tax';
@@ -45,7 +47,8 @@ export class CzechTaxService {
     closedPositions: ClosedPosition[],
     dividends: DividendTransaction[],
     taxYear: number,
-    rateMethod: ExchangeRateMethod = 'GFR_UNIFORM'
+    rateMethod: ExchangeRateMethod = 'GFR_UNIFORM',
+    accounts: Account[] = []
   ): AnnualTaxReport {
     // 1. Process Securities Sales (§ 10 & § 4 ZDP)
     const salesInYear = closedPositions.filter((p) => {
@@ -177,7 +180,7 @@ export class CzechTaxService {
       exemptSalesOver5MCZK,
     };
 
-    // 2. Process Foreign Dividends (§ 8 ZDP & SZDZ Příloha č. 3)
+    // 2. Process Dividends (§ 8 ZDP & SZDZ Příloha č. 3 & Domestic § 36)
     const dividendsInYear = dividends.filter((d) => {
       const dt = new Date(d.paymentDateUtc);
       return !isNaN(dt.getTime()) && dt.getUTCFullYear() === taxYear;
@@ -193,10 +196,23 @@ export class CzechTaxService {
       }
     >();
 
+    let domesticGrossCZK = 0;
+    let domesticWithholdingTaxPaidCZK = 0;
+    let domesticCount = 0;
+
     for (const div of dividendsInYear) {
-      // Exclude domestic Czech dividends (§ 36 final withholding tax)
+      const rate = this.getRateToCZK(div.currency, taxYear, rateMethod);
+      const grossCZK = div.grossAmount * rate;
+      const whtCZK = div.withholdingTax * rate;
+
+      // Identify domestic Czech dividends (§ 36 final withholding tax 15%)
       const isDomesticCZ = div.isin?.startsWith('CZ') || div.currency === 'CZK';
-      if (isDomesticCZ) continue;
+      if (isDomesticCZ) {
+        domesticGrossCZK += grossCZK;
+        domesticWithholdingTaxPaidCZK += whtCZK > 0 ? whtCZK : Math.round(grossCZK * 0.15);
+        domesticCount++;
+        continue;
+      }
 
       let country = 'US';
       let countryName = 'Spojené státy americké (USA)';
@@ -220,12 +236,28 @@ export class CzechTaxService {
           country = 'GB';
           countryName = 'Velká Británie';
           dttRate = 0.15;
+        } else if (prefix === 'FR') {
+          country = 'FR';
+          countryName = 'Francie';
+          dttRate = 0.15;
+        } else if (prefix === 'CH') {
+          country = 'CH';
+          countryName = 'Švýcarsko';
+          dttRate = 0.15;
+        } else if (prefix === 'AT') {
+          country = 'AT';
+          countryName = 'Rakousko';
+          dttRate = 0.15;
+        } else if (prefix === 'PL') {
+          country = 'PL';
+          countryName = 'Polsko';
+          dttRate = 0.15;
+        } else if (prefix === 'LU') {
+          country = 'LU';
+          countryName = 'Lucembursko';
+          dttRate = 0.15;
         }
       }
-
-      const rate = this.getRateToCZK(div.currency, taxYear, rateMethod);
-      const grossCZK = div.grossAmount * rate;
-      const whtCZK = div.withholdingTax * rate;
 
       const existing = countryMap.get(country) || {
         countryName,
@@ -249,7 +281,7 @@ export class CzechTaxService {
       const gross = Math.round(item.grossCZK);
       const paid = Math.round(item.whtCZK);
       const effectiveRate = gross > 0 ? (paid / gross) * 100 : 0;
-      
+
       const czechGross = Math.round(gross * 0.15); // Czech 15%
       const allowedCredit = Math.min(paid, Math.round(gross * item.dttRate));
       const czechDue = Math.max(0, czechGross - allowedCredit);
@@ -272,14 +304,128 @@ export class CzechTaxService {
       netCzechTaxOnDividendsCZK += czechDue;
     }
 
+    const domesticSummary: DomesticDividendSummary = {
+      grossCZK: Math.round(domesticGrossCZK),
+      finalWithholdingTaxPaidCZK: Math.round(domesticWithholdingTaxPaidCZK),
+      count: domesticCount,
+    };
+
     const dividendsSummary: TaxDividendsSummary = {
       taxYear,
       totalGrossForeignDividendsCZK,
       totalForeignTaxPaidCZK,
       totalAllowedCreditCZK,
       netCzechTaxOnDividendsCZK,
+      domestic: domesticSummary,
       countryBreakdown,
     };
+
+    // 3. Process Broker-Level Breakdown
+    const brokerMap = new Map<string, BrokerTaxBreakdown>();
+
+    // Helper to find or init broker entry
+    const getBrokerEntry = (brokerId: BrokerId, accountId: string): BrokerTaxBreakdown => {
+      const key = `${brokerId}_${accountId}`;
+      if (!brokerMap.has(key)) {
+        const matchedAccount = accounts.find((a) => a.id === accountId || (a.brokerId === brokerId && !accountId));
+        const accountName = matchedAccount?.name || `${brokerId} ${matchedAccount?.accountNumber || accountId || ''}`.trim();
+        const baseCurrency: CurrencyCode = matchedAccount?.baseCurrency || 'CZK';
+
+        brokerMap.set(key, {
+          brokerId,
+          accountId: accountId || matchedAccount?.id || brokerId.toLowerCase(),
+          accountName,
+          baseCurrency,
+          dividends: {
+            brokerId,
+            accountId: accountId || matchedAccount?.id || brokerId.toLowerCase(),
+            accountName,
+            domesticGrossCZK: 0,
+            domesticWithholdingTaxCZK: 0,
+            foreignGrossCZK: 0,
+            foreignWithholdingTaxPaidCZK: 0,
+            foreignAllowableCreditCZK: 0,
+            czechTaxDueCZK: 0,
+          },
+          sales: {
+            brokerId,
+            accountId: accountId || matchedAccount?.id || brokerId.toLowerCase(),
+            accountName,
+            exemptProceedsCZK: 0,
+            exemptAcquisitionCostCZK: 0,
+            exemptRealizedGainCZK: 0,
+            exemptTradesCount: 0,
+            taxableProceedsCZK: 0,
+            taxableAcquisitionCostCZK: 0,
+            taxableCommissionsCZK: 0,
+            taxableNetResultCZK: 0,
+            taxableTradesCount: 0,
+          },
+          totalCzechTaxDueCZK: 0,
+        });
+      }
+      return brokerMap.get(key)!;
+    };
+
+    // Pre-populate registered accounts
+    for (const acc of accounts) {
+      getBrokerEntry(acc.brokerId, acc.id);
+    }
+
+    // Populate sales per broker
+    for (const pos of salesInYear) {
+      const rate = this.getRateToCZK(pos.instrumentCurrency, taxYear, rateMethod);
+      const entry = getBrokerEntry(pos.brokerId, pos.accountId || pos.brokerId.toLowerCase());
+
+      const grossSaleCZK = Math.round((pos.saleValueNative || pos.volume * pos.closePrice) * rate);
+      const purchaseCostCZK = Math.round((pos.purchaseValueNative || pos.volume * pos.openPrice) * rate);
+      const feeCZK = Math.round((pos.commissionNative || 0) * rate);
+      const netGainCZK = grossSaleCZK - purchaseCostCZK - feeCZK;
+
+      if (pos.isTimeTestExempt) {
+        entry.sales.exemptProceedsCZK += grossSaleCZK;
+        entry.sales.exemptAcquisitionCostCZK += purchaseCostCZK;
+        entry.sales.exemptRealizedGainCZK += netGainCZK;
+        entry.sales.exemptTradesCount++;
+      } else {
+        entry.sales.taxableProceedsCZK += grossSaleCZK;
+        entry.sales.taxableAcquisitionCostCZK += purchaseCostCZK;
+        entry.sales.taxableCommissionsCZK += feeCZK;
+        entry.sales.taxableNetResultCZK += netGainCZK;
+        entry.sales.taxableTradesCount++;
+      }
+    }
+
+    // Populate dividends per broker
+    for (const div of dividendsInYear) {
+      const rate = this.getRateToCZK(div.currency, taxYear, rateMethod);
+      const grossCZK = Math.round(div.grossAmount * rate);
+      const whtCZK = Math.round(div.withholdingTax * rate);
+
+      const entry = getBrokerEntry(div.brokerId, div.accountId || div.brokerId.toLowerCase());
+      const isDomesticCZ = div.isin?.startsWith('CZ') || div.currency === 'CZK';
+
+      if (isDomesticCZ) {
+        entry.dividends.domesticGrossCZK += grossCZK;
+        entry.dividends.domesticWithholdingTaxCZK += whtCZK > 0 ? whtCZK : Math.round(grossCZK * 0.15);
+      } else {
+        const allowedCredit = Math.min(whtCZK, Math.round(grossCZK * 0.15));
+        const czechDue = Math.max(0, Math.round(grossCZK * 0.15) - allowedCredit);
+
+        entry.dividends.foreignGrossCZK += grossCZK;
+        entry.dividends.foreignWithholdingTaxPaidCZK += whtCZK;
+        entry.dividends.foreignAllowableCreditCZK += allowedCredit;
+        entry.dividends.czechTaxDueCZK += czechDue;
+      }
+    }
+
+    // Finalize tentative tax per broker (applying portfolio 100k exemption if applicable)
+    const brokers = Array.from(brokerMap.values()).map((b) => {
+      const sec10Tax = isUnder100kLimit ? 0 : Math.max(0, Math.round(b.sales.taxableNetResultCZK * 0.15));
+      const divTax = b.dividends.czechTaxDueCZK;
+      b.totalCzechTaxDueCZK = sec10Tax + divTax;
+      return b;
+    });
 
     const totalEstimatedTaxDueCZK = estimatedTaxSecuritiesCZK + netCzechTaxOnDividendsCZK;
     const totalTaxSavingsCZK = securitiesSummary.taxSavedByTimeTestCZK + securitiesSummary.taxSavedBy100kLimitCZK;
@@ -290,6 +436,7 @@ export class CzechTaxService {
       generatedAt: new Date().toISOString(),
       securities: securitiesSummary,
       dividends: dividendsSummary,
+      brokers,
       totalEstimatedTaxDueCZK,
       totalTaxSavingsCZK,
       salesItems,
@@ -317,9 +464,35 @@ export class CzechTaxService {
     lines.push(`Příloha č. 3 (§ 8 ZDP - Zahraniční dividendy) - Hrubé příjmy:;${report.dividends.totalGrossForeignDividendsCZK} Kč`);
     lines.push(`Příloha č. 3 (§ 8 ZDP) - Uplatněný zápočet daně ze zahraničí:;${report.dividends.totalAllowedCreditCZK} Kč`);
     lines.push(`Příloha č. 3 - Doplatek daně v ČR:;${report.dividends.netCzechTaxOnDividendsCZK} Kč`);
+    lines.push(`Tuzemské dividendy (§ 36 ZDP - konečná srážka 15 %):;${report.dividends.domestic.grossCZK} Kč (sraženo ${report.dividends.domestic.finalWithholdingTaxPaidCZK} Kč)`);
     lines.push(`CELKOVÁ DAŇOVÁ POVINNOST K ÚHRADĚ:;${report.totalEstimatedTaxDueCZK} Kč`);
     lines.push(`CELKOVÁ ÚSPORA NA DANI (3letý test + 100k limit):;${report.totalTaxSavingsCZK} Kč`);
     lines.push('');
+
+    // Table of broker breakdowns
+    if (report.brokers && report.brokers.length > 0) {
+      lines.push('--- ROZPAD DAŇOVÉ POVINNOSTI PODLE BROKERŮ ---');
+      lines.push('Broker;Účet;Měna;§ 10 Neosvobozené příjmy;§ 10 Výdaje;§ 10 Čistý zisk/ztráta;§ 10 Osvobozený zisk;§ 8 Zahraniční dividendy;§ 8 Zápočet;§ 8 Doplatek;Tuzemská srážka;Orientační doplatek celkem');
+      for (const b of report.brokers) {
+        lines.push(
+          [
+            b.brokerId,
+            `"${b.accountName}"`,
+            b.baseCurrency,
+            b.sales.taxableProceedsCZK,
+            b.sales.taxableAcquisitionCostCZK + b.sales.taxableCommissionsCZK,
+            b.sales.taxableNetResultCZK,
+            b.sales.exemptRealizedGainCZK,
+            b.dividends.foreignGrossCZK,
+            b.dividends.foreignAllowableCreditCZK,
+            b.dividends.czechTaxDueCZK,
+            b.dividends.domesticWithholdingTaxCZK,
+            b.totalCzechTaxDueCZK,
+          ].join(';')
+        );
+      }
+      lines.push('');
+    }
 
     // Table of sales
     lines.push('--- ROZPIS PRODEJŮ CENNÝCH PAPÍRŮ (§ 10 A § 4 ZDP) ---');
