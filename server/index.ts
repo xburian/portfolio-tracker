@@ -285,6 +285,7 @@ const server = serve({
         'rules',
         'cashLedger',
         'dividends',
+        'closedPositions',
         'salaryConfigs',
         'expenseCategories',
       ] as const;
@@ -338,6 +339,7 @@ const server = serve({
           'rules',
           'cashLedger',
           'dividends',
+          'closedPositions',
           'salaryConfigs',
           'expenseCategories',
         ] as const;

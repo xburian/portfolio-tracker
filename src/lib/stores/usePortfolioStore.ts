@@ -433,6 +433,7 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
       db.holdings.where('profileId').equals(targetProfileId).delete(),
       db.lots.where('profileId').equals(targetProfileId).delete(),
       db.cashLedger.where('profileId').equals(targetProfileId).delete(),
+      db.dividends.where('profileId').equals(targetProfileId).delete(),
       db.closedPositions.where('profileId').equals(targetProfileId).delete(),
     ]);
 
